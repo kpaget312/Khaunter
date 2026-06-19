@@ -1,0 +1,501 @@
+using JumpKhaunter67;
+using System;
+using System.IO;
+using System.Reflection;
+using System.Numerics;
+using System.Collections.Generic;
+using System.Drawing;
+using System.Drawing.Imaging;
+using Dalamud.Interface.Windowing;
+using Dalamud.Interface.Textures;
+using Dalamud.Interface.Textures.TextureWraps;
+using Dalamud.Bindings.ImGui; // Use Dalamud ImGui bindings to match Window flags and texture IDs
+using NAudio.Wave;
+using System.Threading.Tasks;
+
+namespace JumpKhaunter67.Windows;
+
+public class MotivationWindow : Window, IDisposable
+{
+    private readonly Plugin plugin;
+    private float displayTimer = 0f;
+    private ISharedImmediateTexture? currentMemeTexture;
+    private readonly Random random;
+    private readonly string pluginDirectory;
+
+    // GIF animation support
+    private List<ISharedImmediateTexture> frameTextures = new();
+    private List<int> frameDelaysMs = new();
+    private List<string> frameTempFiles = new();
+    private float animationElapsed = 0f;
+    private int currentFrameIndex = 0;
+    private readonly object textureLock = new();
+    private Dalamud.Bindings.ImGui.ImTextureID lastTextureHandle = default;
+    private bool lastTextureValid = false;
+
+    // Optional milestone header image (displayed above the meme)
+    private ISharedImmediateTexture? milestoneTexture = null;
+    private Dalamud.Bindings.ImGui.ImTextureID lastMilestoneHandle = default;
+    private bool lastMilestoneValid = false;
+    private Vector2 milestoneOriginalSize = Vector2.Zero;
+
+    // NAudio playback
+    private IWavePlayer? waveOut = null;
+    private Mp3FileReader? mp3Reader = null;
+
+    // Debug report guard to avoid chat spam
+    private bool debugReported = false;
+
+    // State lock for audio/display sync
+    private readonly object stateLock = new();
+
+    // Simple file logger for diagnostics (disabled)
+    private void WriteLog(string msg) { }
+
+    public MotivationWindow(Plugin plugin) : base(
+        "##JumpKhaunter67_Secret_Overlay",
+        ImGuiWindowFlags.NoDecoration | 
+        ImGuiWindowFlags.NoBackground | 
+        ImGuiWindowFlags.NoMove |
+        ImGuiWindowFlags.NoInputs | 
+        ImGuiWindowFlags.NoNav |
+        ImGuiWindowFlags.NoSavedSettings)
+    {
+        this.plugin = plugin;
+        this.IsOpen = false; 
+        this.random = new Random();
+        this.pluginDirectory = Plugin.PluginInterface.AssemblyLocation.DirectoryName ?? "";
+    }
+
+    public void TriggerMilestone(int milestone)
+    {
+        this.displayTimer = 5.0f;
+        string finalAssetPath = string.Empty;
+
+        try
+        {
+            // Search upward from the assembly directory for an "images" folder (checks up to 5 levels)
+            var dir = this.pluginDirectory;
+            int depth = 0;
+            while (!string.IsNullOrEmpty(dir) && depth < 6)
+            {
+                var candidate = Path.Combine(dir, "images");
+                if (Directory.Exists(candidate))
+                {
+                    var allFiles = Directory.GetFiles(candidate);
+                    var gifFiles = Array.FindAll(allFiles, f => string.Equals(Path.GetExtension(f), ".gif", StringComparison.OrdinalIgnoreCase));
+                    var imgFiles = Array.FindAll(allFiles, f =>
+                        string.Equals(Path.GetExtension(f), ".png", StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(Path.GetExtension(f), ".jpg", StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(Path.GetExtension(f), ".jpeg", StringComparison.OrdinalIgnoreCase));
+
+                    if (gifFiles.Length > 0) finalAssetPath = gifFiles[this.random.Next(gifFiles.Length)];
+                    else if (imgFiles.Length > 0) finalAssetPath = imgFiles[this.random.Next(imgFiles.Length)];
+
+                    if (!string.IsNullOrEmpty(finalAssetPath))
+                    {
+                        break;
+                    }
+                }
+
+                var parent = Directory.GetParent(dir);
+                dir = parent?.FullName ?? string.Empty;
+                depth++;
+            }
+        }
+        catch (Exception ex) { System.Diagnostics.Trace.WriteLine(ex.Message); }
+
+        if (string.IsNullOrEmpty(finalAssetPath))
+        {
+            // Try to extract an embedded image/gif resource from the assembly first
+            try
+            {
+                var asm = Assembly.GetExecutingAssembly();
+                var resources = asm.GetManifestResourceNames();
+                var candidates = Array.FindAll(resources, r => r.EndsWith(".gif", StringComparison.OrdinalIgnoreCase) || r.EndsWith(".png", StringComparison.OrdinalIgnoreCase) || r.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase) || r.EndsWith(".jpeg", StringComparison.OrdinalIgnoreCase));
+                if (candidates.Length > 0)
+                {
+                    var pick = candidates[this.random.Next(candidates.Length)];
+                    var ext = Path.GetExtension(pick);
+                    var tempImg = Path.Combine(Path.GetTempPath(), $"jk67_emb_{Guid.NewGuid()}{ext}");
+                    using (var rs = asm.GetManifestResourceStream(pick))
+                    {
+                        if (rs != null) { using var fs = File.OpenWrite(tempImg); rs.CopyTo(fs); finalAssetPath = tempImg; frameTempFiles.Add(tempImg); }
+                    }
+                }
+            }
+            catch { }
+
+
+            if (string.IsNullOrEmpty(finalAssetPath))
+                finalAssetPath = Path.Combine(this.pluginDirectory, "images", "Shrek.gif.gif");
+        }
+
+        try
+        {
+            // Null previous texture reference
+            this.currentMemeTexture = null;
+
+
+            if (File.Exists(finalAssetPath))
+            {
+                if (string.Equals(Path.GetExtension(finalAssetPath), ".gif", StringComparison.OrdinalIgnoreCase))
+                {
+                    // Load first frame synchronously to avoid long freeze, decode rest in background
+                    try
+                    {
+                        frameTextures.Clear();
+                        frameDelaysMs.Clear();
+                        animationElapsed = 0f;
+                        currentFrameIndex = 0;
+
+                        using (var img = Image.FromFile(finalAssetPath))
+                        {
+                            FrameDimension dims;
+                            int frameCount = 1;
+                            try
+                            {
+                                var fdList = img.FrameDimensionsList;
+                                if (fdList != null && fdList.Length > 0)
+                                {
+                                    dims = new FrameDimension(fdList[0]);
+                                    frameCount = img.GetFrameCount(dims);
+                                }
+                                else
+                                {
+                                    dims = new FrameDimension(Guid.Empty);
+                                    frameCount = 1;
+                                }
+                            }
+                            catch { dims = new FrameDimension(Guid.Empty); frameCount = 1; }
+
+                            int[] delays = new int[frameCount];
+                            System.Drawing.Imaging.PropertyItem? prop = null;
+                            try { prop = img.GetPropertyItem(0x5100); } catch { prop = null; }
+                            try
+                            {
+                                var raw = prop?.Value;
+                                if (raw != null && raw.Length >= 4)
+                                {
+                                    delays = new int[raw.Length / 4];
+                                    for (int i = 0; i < delays.Length; i++)
+                                        delays[i] = BitConverter.ToInt32(raw, i * 4) * 10; // to ms
+                                }
+                                else
+                                {
+                                    for (int i = 0; i < frameCount; i++) delays[i] = 100;
+                                }
+                            }
+                            catch { for (int i = 0; i < frameCount; i++) delays[i] = 100; }
+
+                            // Extract and load first frame quickly
+                            img.SelectActiveFrame(dims, 0);
+                            using (var bmp = new Bitmap(img))
+                            {
+                                string temp0 = Path.Combine(Path.GetTempPath(), $"jk67_{Guid.NewGuid()}_0.png");
+                                bmp.Save(temp0, ImageFormat.Png);
+                                var tex0 = Plugin.TextureProvider.GetFromFile(temp0);
+                                lock (frameTextures) { frameTextures.Add(tex0); frameDelaysMs.Add(delays.Length>0?delays[0]:100); frameTempFiles.Add(temp0); }
+                                // keep temp0 until Dispose to ensure TextureProvider can finish loading; will delete later (frameTempFiles list stores it)
+                            }
+
+                            // Start background decoding for remaining frames
+                            if (frameCount > 1)
+                            {
+                                _ = Task.Run(() =>
+                                {
+                                    try
+                                    {
+                                        for (int i = 1; i < frameCount; i++)
+                                        {
+                                            try
+                                            {
+                                                using var img2 = Image.FromFile(finalAssetPath);
+                                                img2.SelectActiveFrame(dims, i);
+                                                using var bmp2 = new Bitmap(img2);
+                                                string temp = Path.Combine(Path.GetTempPath(), $"jk67_{Guid.NewGuid()}_{i}.png");
+                                                bmp2.Save(temp, ImageFormat.Png);
+                                                var tex = Plugin.TextureProvider.GetFromFile(temp);
+                                                lock (frameTextures) { frameTextures.Add(tex); frameDelaysMs.Add(delays.Length>i?delays[i]:100); frameTempFiles.Add(temp); }
+                                                // keep temp until Dispose to ensure TextureProvider can finish loading; will delete later (frameTempFiles list stores it)
+                                            }
+                                            catch (Exception fex) { System.Diagnostics.Trace.WriteLine(fex.Message); }
+                                        }
+                                    }
+                                    catch (Exception ex2) { System.Diagnostics.Trace.WriteLine(ex2.Message); }
+                                });
+                            }
+                        }
+                    }
+                    catch (Exception ex) { System.Diagnostics.Trace.WriteLine(ex.Message); }
+                }
+                else
+                {
+                    this.currentMemeTexture = Plugin.TextureProvider.GetFromFile(finalAssetPath);
+                }
+            }
+        }
+        catch (Exception ex) { System.Diagnostics.Trace.WriteLine(ex.Message); }
+
+        // Try to find an optional "Milestone" image in the same images folder and load it (png/jpg/jpeg)
+        try
+        {
+            string imagesFolder = Path.GetDirectoryName(finalAssetPath) ?? Path.Combine(this.pluginDirectory, "images");
+            if (Directory.Exists(imagesFolder))
+            {
+                var candidates = Directory.GetFiles(imagesFolder);
+                foreach (var f in candidates)
+                {
+                    var name = Path.GetFileNameWithoutExtension(f);
+                    var ext = Path.GetExtension(f).ToLowerInvariant();
+                    if (string.Equals(name, "Milestone", StringComparison.OrdinalIgnoreCase) && (ext == ".png" || ext == ".jpg" || ext == ".jpeg"))
+                    {
+                        try
+                        {
+                            // Load the original image and keep its alpha; we'll draw a semi-transparent panel behind it to hide checkerboard.
+                            try
+                            {
+                                using var hdrImg = Image.FromFile(f);
+                                this.milestoneOriginalSize = new Vector2(hdrImg.Width, hdrImg.Height);
+                            }
+                            catch { this.milestoneOriginalSize = Vector2.Zero; }
+
+                            this.milestoneTexture = Plugin.TextureProvider.GetFromFile(f);
+                        }
+                        catch (Exception mex) { System.Diagnostics.Trace.WriteLine(mex.Message); }
+                        break;
+                    }
+                }
+            }
+        }
+        catch (Exception ex) { System.Diagnostics.Trace.WriteLine(ex.Message); }
+
+        PlayRandomMilestoneAudio();
+        this.IsOpen = true;
+        // Reset debug flag for this display so we can report any display-time issues once
+        this.debugReported = false;
+    }
+
+    private void PlayRandomMilestoneAudio()
+    {
+        try
+        {
+            string selectedAudioPath = string.Empty;
+
+            // Search upward for an "audio" folder (up to 5 levels)
+            var dir = this.pluginDirectory;
+            int depth = 0;
+            while (!string.IsNullOrEmpty(dir) && depth < 6)
+            {
+                var candidate = Path.Combine(dir, "audio");
+                if (Directory.Exists(candidate))
+                {
+                    var mp3Files = Directory.GetFiles(candidate, "*.mp3");
+                    if (mp3Files.Length > 0)
+                    {
+                        selectedAudioPath = mp3Files[this.random.Next(0, mp3Files.Length)];
+                        break;
+                    }
+                }
+
+                var parent = Directory.GetParent(dir);
+                dir = parent?.FullName ?? string.Empty;
+                depth++;
+            }
+
+            if (string.IsNullOrEmpty(selectedAudioPath))
+            {
+                // Try embedded mp3 resources inside the assembly
+                try
+                {
+                    var asm = Assembly.GetExecutingAssembly();
+                    var res = asm.GetManifestResourceNames();
+                    var mp3s = Array.FindAll(res, r => r.EndsWith(".mp3", StringComparison.OrdinalIgnoreCase));
+                    if (mp3s.Length > 0)
+                    {
+                        var pick = mp3s[this.random.Next(mp3s.Length)];
+                        var ext = Path.GetExtension(pick);
+                        var tempMp3 = Path.Combine(Path.GetTempPath(), $"jk67_emb_{Guid.NewGuid()}{ext}");
+                        using (var rs = asm.GetManifestResourceStream(pick))
+                        {
+                            if (rs != null) { using var fs = File.OpenWrite(tempMp3); rs.CopyTo(fs); selectedAudioPath = tempMp3; }
+                        }
+                    }
+                }
+                catch { }
+
+                if (string.IsNullOrEmpty(selectedAudioPath)) { return; }
+            }
+
+
+            try { this.waveOut?.Stop(); } catch (Exception ex) { System.Diagnostics.Trace.WriteLine(ex.Message); }
+            try { this.mp3Reader?.Dispose(); } catch { }
+            try { this.waveOut?.Dispose(); } catch { }
+            this.mp3Reader = null;
+            this.waveOut = null;
+
+            try
+            {
+                this.mp3Reader = new Mp3FileReader(selectedAudioPath);
+                this.waveOut = new WaveOutEvent();
+                this.waveOut.Init(this.mp3Reader);
+                this.waveOut.PlaybackStopped += (s, e) =>
+                {
+                    try
+                    {
+                        lock (this.stateLock) { this.displayTimer = 0f; }
+                        try { } catch { }
+                    }
+                    catch { /* ignore playback handler logging */ }
+                };
+                this.waveOut.Play();
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Trace.WriteLine(ex.Message);
+            }
+        }
+        catch (Exception ex) { System.Diagnostics.Trace.WriteLine(ex.Message); }
+    }
+
+    public void Dispose()
+    {
+        try { this.waveOut?.Stop(); } catch { }
+        try { this.mp3Reader?.Dispose(); } catch { }
+        try { this.waveOut?.Dispose(); } catch { }
+        this.mp3Reader = null;
+        this.waveOut = null;
+        this.currentMemeTexture = null;
+        foreach (var t in frameTextures) { try { /* no dispose available */ } catch { } }
+        frameTextures.Clear();
+        frameDelaysMs.Clear();
+        foreach (var f in frameTempFiles) { try { File.Delete(f); } catch { } }
+        frameTempFiles.Clear();
+    }
+
+    public override void Draw()
+    {
+        try
+        {
+            // Update animation timing
+            float dt = ImGui.GetIO().DeltaTime;
+            // Ensure first decoded frame is used for display if currentMemeTexture wasn't set during decode
+            if (this.currentMemeTexture == null && this.frameTextures.Count > 0)
+            {
+                this.currentMemeTexture = this.frameTextures[0];
+            }
+
+            // Diagnostics: report once if rendering can't proceed
+            IDalamudTextureWrap? wrapTmp = null;
+            bool tryWrap = false;
+            lock (this.textureLock)
+            {
+                if (this.currentMemeTexture != null)
+                    tryWrap = this.currentMemeTexture.TryGetWrap(out wrapTmp, out _);
+                if (tryWrap && wrapTmp != null && wrapTmp.Handle != IntPtr.Zero)
+                {
+                    this.lastTextureHandle = wrapTmp.Handle;
+                    this.lastTextureValid = true;
+                }
+            }
+
+            if (!this.debugReported)
+            {
+                if (this.currentMemeTexture == null)
+                {
+                    try { } catch { }
+                }
+                else if (!tryWrap)
+                {
+                    try { } catch { }
+                }
+                else if (wrapTmp == null)
+                {
+                    try { } catch { }
+                }
+                else if (wrapTmp.Handle == IntPtr.Zero)
+                {
+                    try { } catch { }
+                }
+                if (this.milestoneTexture == null)
+                {
+                    try { } catch { }
+                }
+                this.debugReported = true;
+            }
+
+            if (frameTextures.Count > 1)
+            {
+                animationElapsed += dt * 1000f;
+                int delay = frameDelaysMs[currentFrameIndex];
+                if (animationElapsed >= delay)
+                {
+                    animationElapsed -= delay;
+                    currentFrameIndex = (currentFrameIndex + 1) % frameTextures.Count;
+                    currentMemeTexture = frameTextures[currentFrameIndex];
+                }
+            }
+
+            // Close overlay when no animation and timer expired and no audio playing
+            if (this.displayTimer > 0f) this.displayTimer -= dt;
+            if (this.displayTimer <= 0f && (this.waveOut == null || this.waveOut.PlaybackState != PlaybackState.Playing))
+            {
+                this.IsOpen = false;
+                try { this.waveOut?.Stop(); } catch { }
+                return;
+            }
+
+            var viewport = ImGui.GetMainViewport();
+            // Increase GIF size by 40% (previous scale 0.25 -> now 0.35)
+            float scale = 0.504f;
+            Vector2 imageSize = new Vector2(400, 400) * scale;
+
+            // compute window size and position centered near top — add larger padding so image isn't clipped
+            Vector2 totalSize = imageSize + new Vector2(80, 80);
+            ImGui.SetNextWindowSize(totalSize, ImGuiCond.Always);
+            // Also set Dalamud window size and position so the WindowSystem doesn't clip content
+            this.Size = totalSize;
+            this.SizeCondition = ImGuiCond.Always;
+            var pos = new Vector2(viewport.WorkPos.X + (viewport.WorkSize.X - totalSize.X) / 2, viewport.WorkPos.Y + 20);
+            this.Position = pos;
+            this.PositionCondition = ImGuiCond.Always;
+            ImGui.SetNextWindowPos(pos, ImGuiCond.Always);
+
+            // Prefer to draw the active wrap; fall back to lastTextureHandle if the current texture hasn't produced a wrap yet
+            IDalamudTextureWrap? wrapToDraw = null;
+            bool haveWrap = false;
+            lock (this.textureLock)
+            {
+            if (this.currentMemeTexture != null)
+                haveWrap = this.currentMemeTexture.TryGetWrap(out wrapToDraw, out _);
+            if (!haveWrap && this.lastTextureValid)
+            {
+                // use last known handle directly, centered
+                ImGui.SetCursorPosX((totalSize.X - imageSize.X) / 2f);
+                ImGui.Image(this.lastTextureHandle, imageSize);
+                return;
+            }
+            }
+
+            // Draw meme image (gif) centered in the window (milestone header removed)
+            ImGui.SetCursorPosX((totalSize.X - imageSize.X) / 2f);
+            if (wrapToDraw != null)
+            {
+                ImGui.Image(wrapToDraw.Handle, imageSize);
+            }
+            else if (this.lastTextureValid)
+            {
+                ImGui.Image(this.lastTextureHandle, imageSize);
+            }
+        }
+        catch (Exception ex)
+        {
+            try { System.Diagnostics.Trace.WriteLine(ex.ToString()); } catch { }
+            this.IsOpen = false;
+        }
+    }
+}
+
+
+
+
