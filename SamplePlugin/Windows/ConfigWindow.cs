@@ -16,6 +16,7 @@ public class ConfigWindow : Window, IDisposable
     {
         this.Size = new Vector2(300, 150);
         this.SizeCondition = ImGuiCond.Always;
+        this.PositionCondition = ImGuiCond.Once;
         this.plugin = plugin;
     }
 

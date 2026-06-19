@@ -242,29 +242,20 @@ public class MotivationWindow : Window, IDisposable
 
     private string LogPath => Path.Combine(Path.GetTempPath(), "jk67_audio.log");
 
-    private void AudioLog(string msg)
-    {
-        try { File.AppendAllText(LogPath, $"{DateTime.Now:HH:mm:ss.fff} {msg}\n"); } catch { }
-    }
-
     private void PlayRandomMilestoneAudio()
     {
         try
         {
-            AudioLog("=== PlayRandomMilestoneAudio ===");
             string selectedAudioPath = string.Empty;
 
             var dir = this.pluginDirectory;
-            AudioLog($"pluginDirectory={dir}");
             int depth = 0;
             while (!string.IsNullOrEmpty(dir) && depth < 6)
             {
                 var candidate = Path.Combine(dir, "audio");
-                AudioLog($"  checking dir={candidate} exists={Directory.Exists(candidate)}");
                 if (Directory.Exists(candidate))
                 {
                     var mp3Files = Directory.GetFiles(candidate, "*.mp3");
-                    AudioLog($"  found {mp3Files.Length} mp3s");
                     if (mp3Files.Length > 0)
                     {
                         selectedAudioPath = mp3Files[this.random.Next(0, mp3Files.Length)];
@@ -279,13 +270,11 @@ public class MotivationWindow : Window, IDisposable
 
             if (string.IsNullOrEmpty(selectedAudioPath))
             {
-                AudioLog("no audio folder found, trying embedded resources");
                 try
                 {
                     var asm = Assembly.GetExecutingAssembly();
                     var res = asm.GetManifestResourceNames();
                     var mp3s = Array.FindAll(res, r => r.EndsWith(".mp3", StringComparison.OrdinalIgnoreCase));
-                    AudioLog($"embedded mp3s: {mp3s.Length}");
                     if (mp3s.Length > 0)
                     {
                         var pick = mp3s[this.random.Next(mp3s.Length)];
@@ -295,39 +284,28 @@ public class MotivationWindow : Window, IDisposable
                         {
                             if (rs != null) { using var fs = File.OpenWrite(tempMp3); rs.CopyTo(fs); selectedAudioPath = tempMp3; }
                         }
-                        AudioLog($"extracted embedded mp3 to {selectedAudioPath}");
                     }
                 }
                 catch { }
 
-                if (string.IsNullOrEmpty(selectedAudioPath)) { AudioLog("No audio found at all"); return; }
+                if (string.IsNullOrEmpty(selectedAudioPath)) return;
             }
 
             this.audioPlaying = false;
             StopMciAudio();
 
-            AudioLog($"selectedAudioPath={selectedAudioPath} exists={File.Exists(selectedAudioPath)}");
-            if (!File.Exists(selectedAudioPath)) { AudioLog("FILE DOES NOT EXIST"); return; }
-
-            // Try MCI with different type specifiers
-            bool played = false;
-            foreach (var typeSpec in new[] { "", "type mpegvideo", "type MPEGVideo", "type waveaudio" })
+            foreach (var typeSpec in new[] { "", "type mpegvideo", "type waveaudio" })
             {
                 var cmd = string.IsNullOrEmpty(typeSpec)
                     ? $"open \"{selectedAudioPath}\" alias {MciAlias}"
                     : $"open \"{selectedAudioPath}\" {typeSpec} alias {MciAlias}";
-                AudioLog($"MCI open: {cmd}");
                 int ret = mciSendString(cmd, null, 0, IntPtr.Zero);
-                AudioLog($"  ret={ret}");
                 if (ret == 0)
                 {
                     int retPlay = mciSendString($"play {MciAlias}", null, 0, IntPtr.Zero);
-                    AudioLog($"  play ret={retPlay}");
                     if (retPlay == 0)
                     {
-                        played = true;
                         this.audioPlaying = true;
-                        AudioLog("  SUCCESS - audio playing via MCI");
                         break;
                     }
                     else
@@ -336,29 +314,8 @@ public class MotivationWindow : Window, IDisposable
                     }
                 }
             }
-
-            if (!played)
-            {
-                AudioLog("MCI failed, trying Process.Start fallback");
-                try
-                {
-                    var psi = new System.Diagnostics.ProcessStartInfo(selectedAudioPath)
-                    {
-                        UseShellExecute = true,
-                        Verb = "open",
-                        WindowStyle = System.Diagnostics.ProcessWindowStyle.Hidden
-                    };
-                    System.Diagnostics.Process.Start(psi);
-                    AudioLog("Process.Start launched");
-                    this.audioPlaying = true;
-                }
-                catch (Exception pex)
-                {
-                    AudioLog($"Process.Start failed: {pex.Message}");
-                }
-            }
         }
-        catch (Exception ex) { AudioLog($"EXCEPTION: {ex}"); }
+        catch { }
     }
 
     private void StopMciAudio()
