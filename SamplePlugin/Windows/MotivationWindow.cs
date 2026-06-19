@@ -52,8 +52,8 @@ public class MotivationWindow : Window, IDisposable
         ImGuiWindowFlags.NoDecoration | 
         ImGuiWindowFlags.NoBackground | 
         ImGuiWindowFlags.NoMove |
-        ImGuiWindowFlags.NoMouseInputs |
-        ImGuiWindowFlags.NoNavFocus |
+        ImGuiWindowFlags.NoInputs | 
+        ImGuiWindowFlags.NoNav |
         ImGuiWindowFlags.NoSavedSettings)
     {
         this.plugin = plugin;
@@ -405,9 +405,6 @@ public class MotivationWindow : Window, IDisposable
     {
         try
         {
-            // Bring overlay to front while visible so config window doesn't cover it
-            ImGui.SetNextWindowFocus();
-
             // Update animation timing
             float dt = ImGui.GetIO().DeltaTime;
             // Ensure first decoded frame is used for display if currentMemeTexture wasn't set during decode
