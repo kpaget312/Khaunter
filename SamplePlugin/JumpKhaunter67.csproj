@@ -12,11 +12,11 @@
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-    <UseWPF>true</UseWPF>
   </PropertyGroup>
 
   <ItemGroup>
   <PackageReference Include="ImGui.NET" Version="1.90.0.1" />
+  <PackageReference Include="System.Drawing.Common" Version="8.0.0" />
   </ItemGroup>
 
   <ItemGroup>

@@ -4,7 +4,8 @@ using System.IO;
 using System.Reflection;
 using System.Numerics;
 using System.Collections.Generic;
-using System.Windows.Media.Imaging;
+using System.Drawing;
+using System.Drawing.Imaging;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
@@ -153,68 +154,79 @@ public class MotivationWindow : Window, IDisposable
                         animationElapsed = 0f;
                         currentFrameIndex = 0;
 
-                        var decoder = BitmapDecoder.Create(new Uri(finalAssetPath, UriKind.Absolute),
-                            BitmapCreateOptions.None, BitmapCacheOption.OnLoad);
-                        int frameCount = decoder.Frames.Count;
-
-                        int[] delays = new int[frameCount];
-                        for (int i = 0; i < frameCount; i++)
+                        using (var img = Image.FromFile(finalAssetPath))
                         {
+                            FrameDimension dims;
+                            int frameCount = 1;
                             try
                             {
-                                var meta = decoder.Frames[i].Metadata as BitmapMetadata;
-                                if (meta != null)
+                                var fdList = img.FrameDimensionsList;
+                                if (fdList != null && fdList.Length > 0)
                                 {
-                                    var rawDelay = meta.GetQuery("/grctlext/Delay");
-                                    if (rawDelay is ushort u) delays[i] = Math.Max(u * 10, 10);
-                                    else if (rawDelay is short s) delays[i] = Math.Max(s * 10, 10);
-                                    else delays[i] = 100;
+                                    dims = new FrameDimension(fdList[0]);
+                                    frameCount = img.GetFrameCount(dims);
                                 }
-                                else delays[i] = 100;
+                                else
+                                {
+                                    dims = new FrameDimension(Guid.Empty);
+                                    frameCount = 1;
+                                }
                             }
-                            catch { delays[i] = 100; }
-                        }
+                            catch { dims = new FrameDimension(Guid.Empty); frameCount = 1; }
 
-                        using (var ms = new MemoryStream())
-                        {
-                            var enc = new PngBitmapEncoder();
-                            enc.Frames.Add(BitmapFrame.Create(decoder.Frames[0]));
-                            enc.Save(ms);
-                            string temp0 = Path.Combine(Path.GetTempPath(), $"jk67_{Guid.NewGuid()}_0.png");
-                            File.WriteAllBytes(temp0, ms.ToArray());
-                            var tex0 = Plugin.TextureProvider.GetFromFile(temp0);
-                            lock (frameTextures) { frameTextures.Add(tex0); frameDelaysMs.Add(delays.Length > 0 ? delays[0] : 100); frameTempFiles.Add(temp0); }
-                        }
-
-                        if (frameCount > 1 && !ct.IsCancellationRequested)
-                        {
-                            var frozenFrames = new BitmapFrame[frameCount];
-                            for (int i = 0; i < frameCount; i++)
-                                frozenFrames[i] = BitmapFrame.Create(decoder.Frames[i]);
-
-                            _ = Task.Run(() =>
+                            int[] delays = new int[frameCount];
+                            PropertyItem? prop = null;
+                            try { prop = img.GetPropertyItem(0x5100); } catch { prop = null; }
+                            try
                             {
-                                try
+                                var raw = prop?.Value;
+                                if (raw != null && raw.Length >= 4)
                                 {
-                                    for (int i = 1; i < frameCount; i++)
-                                    {
-                                        if (ct.IsCancellationRequested) break;
-                                        try
-                                        {
-                                            using var ms = new MemoryStream();
-                                            var enc = new PngBitmapEncoder();
-                                            enc.Frames.Add(frozenFrames[i]);
-                                            enc.Save(ms);
-                                            string temp = Path.Combine(Path.GetTempPath(), $"jk67_{Guid.NewGuid()}_{i}.png");
-                                            File.WriteAllBytes(temp, ms.ToArray());
-                                            var tex = Plugin.TextureProvider.GetFromFile(temp);
-                                            lock (frameTextures) { frameTextures.Add(tex); frameDelaysMs.Add(delays.Length > i ? delays[i] : 100); frameTempFiles.Add(temp); }
-                                        }
-                                        catch (Exception fex) { System.Diagnostics.Trace.WriteLine(fex.Message); }
-                                    }
+                                    delays = new int[raw.Length / 4];
+                                    for (int i = 0; i < delays.Length; i++)
+                                        delays[i] = BitConverter.ToInt32(raw, i * 4) * 10;
                                 }
-                                catch (Exception ex2) { System.Diagnostics.Trace.WriteLine(ex2.Message); }
-                            }, ct);
+                                else
+                                {
+                                    for (int i = 0; i < frameCount; i++) delays[i] = 100;
+                                }
+                            }
+                            catch { for (int i = 0; i < frameCount; i++) delays[i] = 100; }
+
+                            img.SelectActiveFrame(dims, 0);
+                            using (var bmp = new Bitmap(img))
+                            {
+                                string temp0 = Path.Combine(Path.GetTempPath(), $"jk67_{Guid.NewGuid()}_0.png");
+                                bmp.Save(temp0, ImageFormat.Png);
+                                var tex0 = Plugin.TextureProvider.GetFromFile(temp0);
+                                lock (frameTextures) { frameTextures.Add(tex0); frameDelaysMs.Add(delays.Length>0?delays[0]:100); frameTempFiles.Add(temp0); }
+                            }
+
+                            if (frameCount > 1 && !ct.IsCancellationRequested)
+                            {
+                                _ = Task.Run(() =>
+                                {
+                                    try
+                                    {
+                                        for (int i = 1; i < frameCount; i++)
+                                        {
+                                            if (ct.IsCancellationRequested) break;
+                                            try
+                                            {
+                                                using var img2 = Image.FromFile(finalAssetPath);
+                                                img2.SelectActiveFrame(dims, i);
+                                                using var bmp2 = new Bitmap(img2);
+                                                string temp = Path.Combine(Path.GetTempPath(), $"jk67_{Guid.NewGuid()}_{i}.png");
+                                                bmp2.Save(temp, ImageFormat.Png);
+                                                var tex = Plugin.TextureProvider.GetFromFile(temp);
+                                                lock (frameTextures) { frameTextures.Add(tex); frameDelaysMs.Add(delays.Length>i?delays[i]:100); frameTempFiles.Add(temp); }
+                                            }
+                                            catch (Exception fex) { System.Diagnostics.Trace.WriteLine(fex.Message); }
+                                        }
+                                    }
+                                    catch (Exception ex2) { System.Diagnostics.Trace.WriteLine(ex2.Message); }
+                                }, ct);
+                            }
                         }
                     }
                     catch (Exception ex) { System.Diagnostics.Trace.WriteLine(ex.Message); }
