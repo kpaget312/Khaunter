@@ -38,7 +38,7 @@ public class MotivationWindow : Window, IDisposable
     private const string MciAlias = "jk67_audio";
     private bool audioPlaying = false;
 
-    [DllImport("winmm.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
+    [DllImport("winmm.dll", EntryPoint = "mciSendStringW", CharSet = CharSet.Unicode, ExactSpelling = true)]
     private static extern int mciSendString(string command, StringBuilder? returnString, int returnLength, IntPtr hwndCallback);
 
     // Debug report guard to avoid chat spam
