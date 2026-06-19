@@ -8,12 +8,10 @@ using System.Drawing;
 using System.Drawing.Imaging;
 using System.Runtime.InteropServices;
 using System.Text;
-using System.Threading;
 using Dalamud.Interface.Windowing;
 using Dalamud.Interface.Textures;
 using Dalamud.Interface.Textures.TextureWraps;
 using Dalamud.Bindings.ImGui;
-using System.Threading.Tasks;
 
 namespace JumpKhaunter67.Windows;
 
@@ -44,9 +42,6 @@ public class MotivationWindow : Window, IDisposable
 
     private bool debugReported = false;
 
-    // Simple file logger for diagnostics (disabled)
-    private void WriteLog(string msg) { }
-
     public MotivationWindow(Plugin plugin) : base(
         "##JumpKhaunter67_Secret_Overlay",
         ImGuiWindowFlags.NoDecoration | 
@@ -67,9 +62,9 @@ public class MotivationWindow : Window, IDisposable
         this.displayTimer = 5.0f;
         string finalAssetPath = string.Empty;
 
+        // Search upward from the assembly directory for an "images" folder
         try
         {
-            // Search upward from the assembly directory for an "images" folder (checks up to 5 levels)
             var dir = this.pluginDirectory;
             int depth = 0;
             while (!string.IsNullOrEmpty(dir) && depth < 6)
@@ -87,22 +82,17 @@ public class MotivationWindow : Window, IDisposable
                     if (gifFiles.Length > 0) finalAssetPath = gifFiles[this.random.Next(gifFiles.Length)];
                     else if (imgFiles.Length > 0) finalAssetPath = imgFiles[this.random.Next(imgFiles.Length)];
 
-                    if (!string.IsNullOrEmpty(finalAssetPath))
-                    {
-                        break;
-                    }
+                    if (!string.IsNullOrEmpty(finalAssetPath)) break;
                 }
-
                 var parent = Directory.GetParent(dir);
                 dir = parent?.FullName ?? string.Empty;
                 depth++;
             }
         }
-        catch (Exception ex) { System.Diagnostics.Trace.WriteLine(ex.Message); }
+        catch { }
 
         if (string.IsNullOrEmpty(finalAssetPath))
         {
-            // Try to extract an embedded image/gif resource from the assembly first
             try
             {
                 var asm = Assembly.GetExecutingAssembly();
@@ -121,45 +111,74 @@ public class MotivationWindow : Window, IDisposable
             }
             catch { }
 
-
             if (string.IsNullOrEmpty(finalAssetPath))
                 finalAssetPath = Path.Combine(this.pluginDirectory, "images", "Shrek.gif.gif");
         }
 
         try
         {
-            // Null previous texture reference
             this.currentMemeTexture = null;
 
-
-            System.Diagnostics.Trace.WriteLine($"JK67: finalAssetPath={finalAssetPath} exists={File.Exists(finalAssetPath)}");
             if (File.Exists(finalAssetPath))
             {
                 if (string.Equals(Path.GetExtension(finalAssetPath), ".gif", StringComparison.OrdinalIgnoreCase))
                 {
-                    lock (frameTextures)
-                    {
-                        frameTextures.Clear();
-                        frameDelaysMs.Clear();
-                    }
+                    CleanupFrames();
                     animationElapsed = 0f;
                     currentFrameIndex = 0;
 
-                    try
+                    using (var img = Image.FromFile(finalAssetPath))
                     {
-                        using (var img = Image.FromFile(finalAssetPath))
+                        var dims = new FrameDimension(Guid.Empty);
+                        int frameCount = 1;
+                        try
                         {
-                            img.SelectActiveFrame(new FrameDimension(img.FrameDimensionsList?[0] ?? Guid.Empty), 0);
+                            var fdList = img.FrameDimensionsList;
+                            if (fdList != null && fdList.Length > 0)
+                            {
+                                dims = new FrameDimension(fdList[0]);
+                                frameCount = img.GetFrameCount(dims);
+                            }
+                        }
+                        catch { }
+
+                        int[] delays = new int[frameCount];
+                        try
+                        {
+                            var prop = img.GetPropertyItem(0x5100);
+                            var raw = prop?.Value;
+                            if (raw != null && raw.Length >= 4)
+                            {
+                                int count = Math.Min(delays.Length, raw.Length / 4);
+                                for (int i = 0; i < count; i++)
+                                    delays[i] = Math.Max(BitConverter.ToInt32(raw, i * 4) * 10, 10);
+                            }
+                        }
+                        catch { }
+
+                        for (int i = 0; i < frameCount; i++)
+                        {
+                            img.SelectActiveFrame(dims, i);
                             using (var bmp = new Bitmap(img))
                             {
-                                string temp = Path.Combine(Path.GetTempPath(), $"jk67_{Guid.NewGuid()}.png");
+                                string temp = Path.Combine(Path.GetTempPath(), $"jk67_{Guid.NewGuid()}_{i}.png");
                                 bmp.Save(temp, ImageFormat.Png);
-                                this.currentMemeTexture = Plugin.TextureProvider.GetFromFile(temp);
-                                frameTempFiles.Add(temp);
+                                var tex = Plugin.TextureProvider.GetFromFile(temp);
+                                lock (frameTextures)
+                                {
+                                    frameTextures.Add(tex);
+                                    frameDelaysMs.Add(delays.Length > i && delays[i] > 0 ? delays[i] : 100);
+                                    frameTempFiles.Add(temp);
+                                }
                             }
                         }
                     }
-                    catch { }
+
+                    lock (frameTextures)
+                    {
+                        if (frameTextures.Count > 0)
+                            this.currentMemeTexture = frameTextures[0];
+                    }
                 }
                 else
                 {
@@ -167,16 +186,25 @@ public class MotivationWindow : Window, IDisposable
                 }
             }
         }
-        catch (Exception ex) { System.Diagnostics.Trace.WriteLine(ex.Message); }
+        catch { }
 
-        // Milestone header image support disabled — prefer showing the selected meme GIF only.
         PlayRandomMilestoneAudio();
         this.IsOpen = true;
-        // Reset debug flag for this display so we can report any display-time issues once
         this.debugReported = false;
     }
 
-    private string LogPath => Path.Combine(Path.GetTempPath(), "jk67_audio.log");
+    private void CleanupFrames()
+    {
+        this.currentMemeTexture = null;
+        this.lastTextureValid = false;
+        lock (frameTextures)
+        {
+            frameTextures.Clear();
+            frameDelaysMs.Clear();
+        }
+        foreach (var f in frameTempFiles) { try { File.Delete(f); } catch { } }
+        frameTempFiles.Clear();
+    }
 
     private void PlayRandomMilestoneAudio()
     {
@@ -286,15 +314,7 @@ public class MotivationWindow : Window, IDisposable
     {
         StopMciAudio();
         this.audioPlaying = false;
-        this.currentMemeTexture = null;
-        lock (frameTextures)
-        {
-            foreach (var t in frameTextures) { try { /* no dispose available */ } catch { } }
-            frameTextures.Clear();
-            frameDelaysMs.Clear();
-        }
-        foreach (var f in frameTempFiles) { try { File.Delete(f); } catch { } }
-        frameTempFiles.Clear();
+        CleanupFrames();
     }
 
     public override void Draw()
@@ -370,6 +390,7 @@ public class MotivationWindow : Window, IDisposable
             {
                 this.IsOpen = false;
                 StopMciAudio();
+                CleanupFrames();
                 return;
             }
 
