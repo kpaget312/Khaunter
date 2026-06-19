@@ -13,9 +13,6 @@ New-Item -ItemType Directory -Path $tmp -Force | Out-Null
 Copy-Item -Path $dll -Destination $tmp -Force
 Copy-Item -Path (Join-Path $bin "JumpKhaunter67.json") -Destination $tmp -Force
 
-# Copy NAudio dependency DLLs required for audio playback
-Get-ChildItem -Path $bin -Filter "NAudio*.dll" | ForEach-Object { Copy-Item -Path $_.FullName -Destination $tmp -Force }
-
 $imagesSrc = Join-Path $projDir "images"
 $audioSrc = Join-Path $projDir "audio"
 if (Test-Path $imagesSrc) { Copy-Item -Path $imagesSrc -Destination (Join-Path $tmp "images") -Recurse -Force }

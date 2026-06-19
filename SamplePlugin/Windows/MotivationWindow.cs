@@ -6,10 +6,12 @@ using System.Numerics;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Imaging;
+using System.Runtime.InteropServices;
+using System.Text;
 using Dalamud.Interface.Windowing;
 using Dalamud.Interface.Textures;
 using Dalamud.Interface.Textures.TextureWraps;
-using Dalamud.Bindings.ImGui; // Use Dalamud ImGui bindings to match Window flags and texture IDs
+using Dalamud.Bindings.ImGui;
 using System.Threading.Tasks;
 
 namespace JumpKhaunter67.Windows;
@@ -32,15 +34,15 @@ public class MotivationWindow : Window, IDisposable
     private Dalamud.Bindings.ImGui.ImTextureID lastTextureHandle = default;
     private bool lastTextureValid = false;
 
-    // NAudio playback (loaded via reflection to avoid hard dependency)
-    private object? waveOut = null;
-    private object? mp3Reader = null;
+    // Windows MCI audio playback (winmm.dll, built-in, no external dependencies)
+    private const string MciAlias = "jk67_audio";
+    private bool audioPlaying = false;
+
+    [DllImport("winmm.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
+    private static extern int mciSendString(string command, StringBuilder? returnString, int returnLength, IntPtr hwndCallback);
 
     // Debug report guard to avoid chat spam
     private bool debugReported = false;
-
-    // State lock for audio/display sync
-    private readonly object stateLock = new();
 
     // Simple file logger for diagnostics (disabled)
     private void WriteLog(string msg) { }
@@ -267,7 +269,6 @@ public class MotivationWindow : Window, IDisposable
 
             if (string.IsNullOrEmpty(selectedAudioPath))
             {
-                // Try embedded mp3 resources inside the assembly
                 try
                 {
                     var asm = Assembly.GetExecutingAssembly();
@@ -286,112 +287,56 @@ public class MotivationWindow : Window, IDisposable
                 }
                 catch { }
 
-                if (string.IsNullOrEmpty(selectedAudioPath)) { System.Diagnostics.Trace.WriteLine("JK67: No audio found (embedded or audio folder)"); return; }
+                if (string.IsNullOrEmpty(selectedAudioPath)) { System.Diagnostics.Trace.WriteLine("JK67: No audio found"); return; }
             }
 
+            this.audioPlaying = false;
+            StopMciAudio();
 
-            System.Diagnostics.Trace.WriteLine($"JK67: selectedAudioPath={selectedAudioPath}");
-            try { if (this.waveOut != null) { try { var stop = this.waveOut.GetType().GetMethod("Stop"); stop?.Invoke(this.waveOut, null); } catch { } try { var disp = this.waveOut.GetType().GetMethod("Dispose"); disp?.Invoke(this.waveOut, null); } catch { } } } catch { }
-            try { if (this.mp3Reader != null) { try { var d = this.mp3Reader.GetType().GetMethod("Dispose"); d?.Invoke(this.mp3Reader, null); } catch { } } } catch { }
-            this.mp3Reader = null;
-            this.waveOut = null;
-
-            try
+            System.Diagnostics.Trace.WriteLine($"JK67: playing audio={selectedAudioPath}");
+            int ret = mciSendString($"open \"{selectedAudioPath}\" type mpegvideo alias {MciAlias}", null, 0, IntPtr.Zero);
+            if (ret == 0)
             {
-                // Attempt to load NAudio types across all available NAudio assemblies.
-                // In NAudio 2.x, Mp3FileReader lives in NAudio.Core and WaveOutEvent lives in NAudio.WinMM,
-                // so we must search all assemblies rather than assuming one assembly has both types.
-                Type? mp3Type = null;
-                Type? waveOutType = null;
-
-                // 1. Check already-loaded assemblies
-                foreach (var a in AppDomain.CurrentDomain.GetAssemblies())
-                {
-                    var an = a.GetName().Name;
-                    if (an != null && an.StartsWith("NAudio", StringComparison.OrdinalIgnoreCase))
-                    {
-                        mp3Type ??= a.GetType("NAudio.Wave.Mp3FileReader");
-                        waveOutType ??= a.GetType("NAudio.Wave.WaveOutEvent");
-                    }
-                }
-
-                // 2. Try loading by assembly simple name
-                if (mp3Type == null || waveOutType == null)
-                {
-                    foreach (var name in new[] { "NAudio", "NAudio.Core", "NAudio.WinMM" })
-                    {
-                        try
-                        {
-                            var asm = Assembly.Load(name);
-                            mp3Type ??= asm.GetType("NAudio.Wave.Mp3FileReader");
-                            waveOutType ??= asm.GetType("NAudio.Wave.WaveOutEvent");
-                        }
-                        catch { }
-                    }
-                }
-
-                // 3. Fallback: scan NAudio*.dll files next to the plugin assembly
-                if (mp3Type == null || waveOutType == null)
-                {
-                    try
-                    {
-                        var asmDir = this.pluginDirectory;
-                        if (!string.IsNullOrEmpty(asmDir) && Directory.Exists(asmDir))
-                        {
-                            foreach (var file in Directory.GetFiles(asmDir, "NAudio*.dll"))
-                            {
-                                try
-                                {
-                                    var asm = Assembly.LoadFrom(file);
-                                    mp3Type ??= asm.GetType("NAudio.Wave.Mp3FileReader");
-                                    waveOutType ??= asm.GetType("NAudio.Wave.WaveOutEvent");
-                                }
-                                catch { }
-                            }
-                        }
-                    }
-                    catch { }
-                }
-
-                if (mp3Type != null && waveOutType != null)
-                {
-                    this.mp3Reader = Activator.CreateInstance(mp3Type, new object[] { selectedAudioPath });
-                    this.waveOut = Activator.CreateInstance(waveOutType);
-                    var init = waveOutType.GetMethod("Init");
-                    if (this.mp3Reader != null) init?.Invoke(this.waveOut, new object[] { this.mp3Reader });
-                    var play = waveOutType.GetMethod("Play");
-                    play?.Invoke(this.waveOut, null);
-                }
-                else
-                {
-                    System.Diagnostics.Trace.WriteLine("NAudio types not found; skipping audio");
-                }
-            }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Trace.WriteLine(ex.Message);
+                ret = mciSendString($"play {MciAlias}", null, 0, IntPtr.Zero);
+                if (ret == 0)
+                    this.audioPlaying = true;
             }
         }
         catch (Exception ex) { System.Diagnostics.Trace.WriteLine(ex.Message); }
     }
 
+    private void StopMciAudio()
+    {
+        try
+        {
+            var sb = new StringBuilder(32);
+            int ret = mciSendString($"status {MciAlias} ready", sb, sb.Capacity, IntPtr.Zero);
+            if (ret == 0 && sb.ToString().Trim() == "true")
+            {
+                mciSendString($"stop {MciAlias}", null, 0, IntPtr.Zero);
+                mciSendString($"close {MciAlias}", null, 0, IntPtr.Zero);
+            }
+        }
+        catch { }
+    }
+
+    private bool IsMciAudioPlaying()
+    {
+        try
+        {
+            var sb = new StringBuilder(32);
+            int ret = mciSendString($"status {MciAlias} mode", sb, sb.Capacity, IntPtr.Zero);
+            if (ret == 0)
+                return string.Equals(sb.ToString().Trim(), "playing", StringComparison.OrdinalIgnoreCase);
+        }
+        catch { }
+        return false;
+    }
+
     public void Dispose()
     {
-        try {
-            if (this.waveOut != null)
-            {
-                try { var stop = this.waveOut.GetType().GetMethod("Stop"); stop?.Invoke(this.waveOut, null); } catch { }
-                try { var disp = this.waveOut.GetType().GetMethod("Dispose"); disp?.Invoke(this.waveOut, null); } catch { }
-            }
-        } catch { }
-        try {
-            if (this.mp3Reader != null)
-            {
-                try { var disp2 = this.mp3Reader.GetType().GetMethod("Dispose"); disp2?.Invoke(this.mp3Reader, null); } catch { }
-            }
-        } catch { }
-        this.mp3Reader = null;
-        this.waveOut = null;
+        StopMciAudio();
+        this.audioPlaying = false;
         this.currentMemeTexture = null;
         foreach (var t in frameTextures) { try { /* no dispose available */ } catch { } }
         frameTextures.Clear();
@@ -459,24 +404,15 @@ public class MotivationWindow : Window, IDisposable
                 }
             }
 
-            // Close overlay when no animation and timer expired and no audio playing
+            // Close overlay when timer expired and no audio playing
             if (this.displayTimer > 0f) this.displayTimer -= dt;
-            bool isPlaying = false;
-            try
-            {
-                if (this.waveOut != null)
-                {
-                    var prop = this.waveOut.GetType().GetProperty("PlaybackState");
-                    var stateVal = prop?.GetValue(this.waveOut);
-                    if (stateVal != null && string.Equals(stateVal.ToString(), "Playing", StringComparison.OrdinalIgnoreCase)) isPlaying = true;
-                }
-            }
-            catch { }
+            if (!this.audioPlaying)
+                this.audioPlaying = IsMciAudioPlaying();
 
-            if (this.displayTimer <= 0f && !isPlaying)
+            if (this.displayTimer <= 0f && !this.audioPlaying)
             {
                 this.IsOpen = false;
-                try { if (this.waveOut != null) { var stop = this.waveOut.GetType().GetMethod("Stop"); stop?.Invoke(this.waveOut, null); } } catch { }
+                StopMciAudio();
                 return;
             }
 
