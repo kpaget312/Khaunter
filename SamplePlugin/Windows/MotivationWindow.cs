@@ -298,57 +298,73 @@ public class MotivationWindow : Window, IDisposable
 
             try
             {
-                // Attempt to load NAudio dynamically. If not present, try loading DLLs from the plugin folder, then skip audio gracefully.
-                Assembly? naudioAsm = null;
+                // Attempt to load NAudio types across all available NAudio assemblies.
+                // In NAudio 2.x, Mp3FileReader lives in NAudio.Core and WaveOutEvent lives in NAudio.WinMM,
+                // so we must search all assemblies rather than assuming one assembly has both types.
+                Type? mp3Type = null;
+                Type? waveOutType = null;
+
+                // 1. Check already-loaded assemblies
                 foreach (var a in AppDomain.CurrentDomain.GetAssemblies())
                 {
-                    var n = a.GetName().Name;
-                    if (string.Equals(n, "NAudio", StringComparison.OrdinalIgnoreCase) || string.Equals(n, "NAudio.Core", StringComparison.OrdinalIgnoreCase)) { naudioAsm = a; break; }
-                }
-                if (naudioAsm == null)
-                {
-                    try { naudioAsm = Assembly.Load("NAudio"); } catch { }
-                    if (naudioAsm == null) try { naudioAsm = Assembly.Load("NAudio.Core"); } catch { }
+                    var an = a.GetName().Name;
+                    if (an != null && an.StartsWith("NAudio", StringComparison.OrdinalIgnoreCase))
+                    {
+                        mp3Type ??= a.GetType("NAudio.Wave.Mp3FileReader");
+                        waveOutType ??= a.GetType("NAudio.Wave.WaveOutEvent");
+                    }
                 }
 
-                // If not already loaded, attempt to load any NAudio*.dll found next to the plugin assembly.
-                if (naudioAsm == null)
+                // 2. Try loading by assembly simple name
+                if (mp3Type == null || waveOutType == null)
+                {
+                    foreach (var name in new[] { "NAudio", "NAudio.Core", "NAudio.WinMM" })
+                    {
+                        try
+                        {
+                            var asm = Assembly.Load(name);
+                            mp3Type ??= asm.GetType("NAudio.Wave.Mp3FileReader");
+                            waveOutType ??= asm.GetType("NAudio.Wave.WaveOutEvent");
+                        }
+                        catch { }
+                    }
+                }
+
+                // 3. Fallback: scan NAudio*.dll files next to the plugin assembly
+                if (mp3Type == null || waveOutType == null)
                 {
                     try
                     {
                         var asmDir = this.pluginDirectory;
-                                                if (!string.IsNullOrEmpty(asmDir) && Directory.Exists(asmDir))
+                        if (!string.IsNullOrEmpty(asmDir) && Directory.Exists(asmDir))
                         {
-                                                    foreach (var file in Directory.GetFiles(asmDir, "NAudio*.dll"))
+                            foreach (var file in Directory.GetFiles(asmDir, "NAudio*.dll"))
                             {
-                                try { naudioAsm = Assembly.LoadFrom(file); if (naudioAsm != null) break; } catch { }
+                                try
+                                {
+                                    var asm = Assembly.LoadFrom(file);
+                                    mp3Type ??= asm.GetType("NAudio.Wave.Mp3FileReader");
+                                    waveOutType ??= asm.GetType("NAudio.Wave.WaveOutEvent");
+                                }
+                                catch { }
                             }
                         }
                     }
                     catch { }
                 }
 
-                if (naudioAsm != null)
+                if (mp3Type != null && waveOutType != null)
                 {
-                    var mp3Type = naudioAsm.GetType("NAudio.Wave.Mp3FileReader");
-                    var waveOutType = naudioAsm.GetType("NAudio.Wave.WaveOutEvent");
-                    if (mp3Type != null && waveOutType != null)
-                    {
-                        this.mp3Reader = Activator.CreateInstance(mp3Type, new object[] { selectedAudioPath });
-                        this.waveOut = Activator.CreateInstance(waveOutType);
-                        var init = waveOutType.GetMethod("Init");
-                        if (this.mp3Reader != null) init?.Invoke(this.waveOut, new object[] { this.mp3Reader });
-                        var play = waveOutType.GetMethod("Play");
-                        play?.Invoke(this.waveOut, null);
-                    }
-                    else
-                    {
-                        System.Diagnostics.Trace.WriteLine("NAudio types not found; skipping audio");
-                    }
+                    this.mp3Reader = Activator.CreateInstance(mp3Type, new object[] { selectedAudioPath });
+                    this.waveOut = Activator.CreateInstance(waveOutType);
+                    var init = waveOutType.GetMethod("Init");
+                    if (this.mp3Reader != null) init?.Invoke(this.waveOut, new object[] { this.mp3Reader });
+                    var play = waveOutType.GetMethod("Play");
+                    play?.Invoke(this.waveOut, null);
                 }
                 else
                 {
-                    System.Diagnostics.Trace.WriteLine("NAudio assembly not available; skipping audio");
+                    System.Diagnostics.Trace.WriteLine("NAudio types not found; skipping audio");
                 }
             }
             catch (Exception ex)
