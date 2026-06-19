@@ -34,12 +34,6 @@
           "NAudio.WinMM": "2.2.0"
         }
       },
-      "NetCoreAudio": {
-        "type": "Direct",
-        "requested": "[1.8.0, )",
-        "resolved": "1.8.0",
-        "contentHash": "WqfUVTjEeDxdrzzlHmMduoUjsnOk2n/1Uw2eDNsVDqCYegdwa6Bz09vvjUlKT6RvKWT7oLTngKfqXKmbXIFSNQ=="
-      },
       "NAudio.Asio": {
         "type": "Transitive",
         "resolved": "2.2.0",

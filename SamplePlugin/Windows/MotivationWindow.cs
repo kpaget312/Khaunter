@@ -10,7 +10,6 @@ using Dalamud.Interface.Windowing;
 using Dalamud.Interface.Textures;
 using Dalamud.Interface.Textures.TextureWraps;
 using Dalamud.Bindings.ImGui; // Use Dalamud ImGui bindings to match Window flags and texture IDs
-using NAudio.Wave;
 using System.Threading.Tasks;
 
 namespace JumpKhaunter67.Windows;
@@ -33,15 +32,9 @@ public class MotivationWindow : Window, IDisposable
     private Dalamud.Bindings.ImGui.ImTextureID lastTextureHandle = default;
     private bool lastTextureValid = false;
 
-    // Optional milestone header image (displayed above the meme)
-    private ISharedImmediateTexture? milestoneTexture = null;
-    private Dalamud.Bindings.ImGui.ImTextureID lastMilestoneHandle = default;
-    private bool lastMilestoneValid = false;
-    private Vector2 milestoneOriginalSize = Vector2.Zero;
-
-    // NAudio playback
-    private IWavePlayer? waveOut = null;
-    private Mp3FileReader? mp3Reader = null;
+    // NAudio playback (loaded via reflection to avoid hard dependency)
+    private object? waveOut = null;
+    private object? mp3Reader = null;
 
     // Debug report guard to avoid chat spam
     private bool debugReported = false;
@@ -137,6 +130,7 @@ public class MotivationWindow : Window, IDisposable
             this.currentMemeTexture = null;
 
 
+            System.Diagnostics.Trace.WriteLine($"JK67: finalAssetPath={finalAssetPath} exists={File.Exists(finalAssetPath)}");
             if (File.Exists(finalAssetPath))
             {
                 if (string.Equals(Path.GetExtension(finalAssetPath), ".gif", StringComparison.OrdinalIgnoreCase))
@@ -237,39 +231,7 @@ public class MotivationWindow : Window, IDisposable
         }
         catch (Exception ex) { System.Diagnostics.Trace.WriteLine(ex.Message); }
 
-        // Try to find an optional "Milestone" image in the same images folder and load it (png/jpg/jpeg)
-        try
-        {
-            string imagesFolder = Path.GetDirectoryName(finalAssetPath) ?? Path.Combine(this.pluginDirectory, "images");
-            if (Directory.Exists(imagesFolder))
-            {
-                var candidates = Directory.GetFiles(imagesFolder);
-                foreach (var f in candidates)
-                {
-                    var name = Path.GetFileNameWithoutExtension(f);
-                    var ext = Path.GetExtension(f).ToLowerInvariant();
-                    if (string.Equals(name, "Milestone", StringComparison.OrdinalIgnoreCase) && (ext == ".png" || ext == ".jpg" || ext == ".jpeg"))
-                    {
-                        try
-                        {
-                            // Load the original image and keep its alpha; we'll draw a semi-transparent panel behind it to hide checkerboard.
-                            try
-                            {
-                                using var hdrImg = Image.FromFile(f);
-                                this.milestoneOriginalSize = new Vector2(hdrImg.Width, hdrImg.Height);
-                            }
-                            catch { this.milestoneOriginalSize = Vector2.Zero; }
-
-                            this.milestoneTexture = Plugin.TextureProvider.GetFromFile(f);
-                        }
-                        catch (Exception mex) { System.Diagnostics.Trace.WriteLine(mex.Message); }
-                        break;
-                    }
-                }
-            }
-        }
-        catch (Exception ex) { System.Diagnostics.Trace.WriteLine(ex.Message); }
-
+        // Milestone header image support disabled â€” prefer showing the selected meme GIF only.
         PlayRandomMilestoneAudio();
         this.IsOpen = true;
         // Reset debug flag for this display so we can report any display-time issues once
@@ -324,31 +286,70 @@ public class MotivationWindow : Window, IDisposable
                 }
                 catch { }
 
-                if (string.IsNullOrEmpty(selectedAudioPath)) { return; }
+                if (string.IsNullOrEmpty(selectedAudioPath)) { System.Diagnostics.Trace.WriteLine("JK67: No audio found (embedded or audio folder)"); return; }
             }
 
 
-            try { this.waveOut?.Stop(); } catch (Exception ex) { System.Diagnostics.Trace.WriteLine(ex.Message); }
-            try { this.mp3Reader?.Dispose(); } catch { }
-            try { this.waveOut?.Dispose(); } catch { }
+            System.Diagnostics.Trace.WriteLine($"JK67: selectedAudioPath={selectedAudioPath}");
+            try { if (this.waveOut != null) { try { var stop = this.waveOut.GetType().GetMethod("Stop"); stop?.Invoke(this.waveOut, null); } catch { } try { var disp = this.waveOut.GetType().GetMethod("Dispose"); disp?.Invoke(this.waveOut, null); } catch { } } } catch { }
+            try { if (this.mp3Reader != null) { try { var d = this.mp3Reader.GetType().GetMethod("Dispose"); d?.Invoke(this.mp3Reader, null); } catch { } } } catch { }
             this.mp3Reader = null;
             this.waveOut = null;
 
             try
             {
-                this.mp3Reader = new Mp3FileReader(selectedAudioPath);
-                this.waveOut = new WaveOutEvent();
-                this.waveOut.Init(this.mp3Reader);
-                this.waveOut.PlaybackStopped += (s, e) =>
+                // Attempt to load NAudio dynamically. If not present, try loading DLLs from the plugin folder, then skip audio gracefully.
+                Assembly? naudioAsm = null;
+                foreach (var a in AppDomain.CurrentDomain.GetAssemblies())
+                {
+                    var n = a.GetName().Name;
+                    if (string.Equals(n, "NAudio", StringComparison.OrdinalIgnoreCase) || string.Equals(n, "NAudio.Core", StringComparison.OrdinalIgnoreCase)) { naudioAsm = a; break; }
+                }
+                if (naudioAsm == null)
+                {
+                    try { naudioAsm = Assembly.Load("NAudio"); } catch { }
+                    if (naudioAsm == null) try { naudioAsm = Assembly.Load("NAudio.Core"); } catch { }
+                }
+
+                // If not already loaded, attempt to load any NAudio*.dll found next to the plugin assembly.
+                if (naudioAsm == null)
                 {
                     try
                     {
-                        lock (this.stateLock) { this.displayTimer = 0f; }
-                        try { } catch { }
+                        var asmDir = this.pluginDirectory;
+                                                if (!string.IsNullOrEmpty(asmDir) && Directory.Exists(asmDir))
+                        {
+                                                    foreach (var file in Directory.GetFiles(asmDir, "NAudio*.dll"))
+                            {
+                                try { naudioAsm = Assembly.LoadFrom(file); if (naudioAsm != null) break; } catch { }
+                            }
+                        }
                     }
-                    catch { /* ignore playback handler logging */ }
-                };
-                this.waveOut.Play();
+                    catch { }
+                }
+
+                if (naudioAsm != null)
+                {
+                    var mp3Type = naudioAsm.GetType("NAudio.Wave.Mp3FileReader");
+                    var waveOutType = naudioAsm.GetType("NAudio.Wave.WaveOutEvent");
+                    if (mp3Type != null && waveOutType != null)
+                    {
+                        this.mp3Reader = Activator.CreateInstance(mp3Type, new object[] { selectedAudioPath });
+                        this.waveOut = Activator.CreateInstance(waveOutType);
+                        var init = waveOutType.GetMethod("Init");
+                        if (this.mp3Reader != null) init?.Invoke(this.waveOut, new object[] { this.mp3Reader });
+                        var play = waveOutType.GetMethod("Play");
+                        play?.Invoke(this.waveOut, null);
+                    }
+                    else
+                    {
+                        System.Diagnostics.Trace.WriteLine("NAudio types not found; skipping audio");
+                    }
+                }
+                else
+                {
+                    System.Diagnostics.Trace.WriteLine("NAudio assembly not available; skipping audio");
+                }
             }
             catch (Exception ex)
             {
@@ -360,9 +361,19 @@ public class MotivationWindow : Window, IDisposable
 
     public void Dispose()
     {
-        try { this.waveOut?.Stop(); } catch { }
-        try { this.mp3Reader?.Dispose(); } catch { }
-        try { this.waveOut?.Dispose(); } catch { }
+        try {
+            if (this.waveOut != null)
+            {
+                try { var stop = this.waveOut.GetType().GetMethod("Stop"); stop?.Invoke(this.waveOut, null); } catch { }
+                try { var disp = this.waveOut.GetType().GetMethod("Dispose"); disp?.Invoke(this.waveOut, null); } catch { }
+            }
+        } catch { }
+        try {
+            if (this.mp3Reader != null)
+            {
+                try { var disp2 = this.mp3Reader.GetType().GetMethod("Dispose"); disp2?.Invoke(this.mp3Reader, null); } catch { }
+            }
+        } catch { }
         this.mp3Reader = null;
         this.waveOut = null;
         this.currentMemeTexture = null;
@@ -417,10 +428,6 @@ public class MotivationWindow : Window, IDisposable
                 {
                     try { } catch { }
                 }
-                if (this.milestoneTexture == null)
-                {
-                    try { } catch { }
-                }
                 this.debugReported = true;
             }
 
@@ -438,10 +445,22 @@ public class MotivationWindow : Window, IDisposable
 
             // Close overlay when no animation and timer expired and no audio playing
             if (this.displayTimer > 0f) this.displayTimer -= dt;
-            if (this.displayTimer <= 0f && (this.waveOut == null || this.waveOut.PlaybackState != PlaybackState.Playing))
+            bool isPlaying = false;
+            try
+            {
+                if (this.waveOut != null)
+                {
+                    var prop = this.waveOut.GetType().GetProperty("PlaybackState");
+                    var stateVal = prop?.GetValue(this.waveOut);
+                    if (stateVal != null && string.Equals(stateVal.ToString(), "Playing", StringComparison.OrdinalIgnoreCase)) isPlaying = true;
+                }
+            }
+            catch { }
+
+            if (this.displayTimer <= 0f && !isPlaying)
             {
                 this.IsOpen = false;
-                try { this.waveOut?.Stop(); } catch { }
+                try { if (this.waveOut != null) { var stop = this.waveOut.GetType().GetMethod("Stop"); stop?.Invoke(this.waveOut, null); } } catch { }
                 return;
             }
 
@@ -450,7 +469,7 @@ public class MotivationWindow : Window, IDisposable
             float scale = 0.504f;
             Vector2 imageSize = new Vector2(400, 400) * scale;
 
-            // compute window size and position centered near top — add larger padding so image isn't clipped
+            // compute window size and position centered near top ï¿½ add larger padding so image isn't clipped
             Vector2 totalSize = imageSize + new Vector2(80, 80);
             ImGui.SetNextWindowSize(totalSize, ImGuiCond.Always);
             // Also set Dalamud window size and position so the WindowSystem doesn't clip content
