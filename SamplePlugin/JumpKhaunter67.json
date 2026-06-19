@@ -2,10 +2,10 @@
   "Author": "RR",
   "Name": "JumpKhaunter67",
   "InternalName": "JumpKhaunter67",
-  "AssemblyVersion": "1.0.0.0",
-  "Description": "Tracks your jumps cross-platform and plays chaotic motivational 67 memes and random mp3 sounds onto your screen when milestones are reached.",
+  "AssemblyVersion": "1.0.0.67",
+  "Description": "Tracks your jumps and plays chaotic motivational memes when milestones are reached.",
   "ApplicableVersion": "any",
-  "Punchline": "The ultimate spacebar motivation tool.",
+  "Punchline": "How many jumps? Never lose Khaunt again",
   "AcceptsFeedback": false,
   "Tags": [
     "utility",
