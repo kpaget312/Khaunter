@@ -84,6 +84,7 @@ public sealed class Plugin : IDalamudPlugin
     {
         if (count == 67 || (count > 67 && (count - 67) % 300 == 0))
         {
+            this.configWindow.IsOpen = false;
             this.motivationWindow.TriggerMilestone(count);
         }
     }
