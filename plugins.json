@@ -1,0 +1,11 @@
+﻿[
+  {
+    "name": "JumpKhaunter67",
+    "id": "JumpKhaunter67",
+    "version": "1.0.0",
+    "author": "kpaget312",
+    "package_url": "https://raw.githubusercontent.com/kpaget312/Khaunter/main/releases/JumpKhaunter67.1.0.0.nupkg",
+    "description": "FFXIV Dalamud plugin that tracks jumps and plays GIF/audio on milestones.",
+    "game": "ffxiv"
+  }
+]
