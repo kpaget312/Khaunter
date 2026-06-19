@@ -13,13 +13,6 @@ New-Item -ItemType Directory -Path $tmp -Force | Out-Null
 Copy-Item -Path $dll -Destination $tmp -Force
 Copy-Item -Path (Join-Path $bin "JumpKhaunter67.json") -Destination $tmp -Force
 
-# Include dependency DLLs (System.Drawing.Common, Microsoft.Win32.SystemEvents) that are NuGet packages, not part of the runtime
-$deps = @("System.Drawing.Common.dll", "Microsoft.Win32.SystemEvents.dll")
-foreach ($dep in $deps) {
-    $depPath = Join-Path $bin $dep
-    if (Test-Path $depPath) { Copy-Item -Path $depPath -Destination $tmp -Force }
-}
-
 $imagesSrc = Join-Path $projDir "images"
 $audioSrc = Join-Path $projDir "audio"
 if (Test-Path $imagesSrc) { Copy-Item -Path $imagesSrc -Destination (Join-Path $tmp "images") -Recurse -Force }
