@@ -55,7 +55,7 @@ public sealed class Plugin : IDalamudPlugin
         bool currentlyAirborne = Condition[Dalamud.Game.ClientState.Conditions.ConditionFlag.Jumping];
         // Debounce rapid inputs: require at least 250ms between counted jumps
         var elapsedMs = (DateTime.Now - this.lastJumpTime).TotalMilliseconds;
-        const double debounceMs = 175.0;
+        const double debounceMs = 75.0;
 
         if (currentlyAirborne && !isAirborne && elapsedMs > debounceMs)
         {
