@@ -1,0 +1,17 @@
+﻿[
+  {
+    "Author": "kpaget312",
+    "Name": "JumpKhaunter67",
+    "InternalName": "JumpKhaunter67",
+    "AssemblyVersion": "1.0.0.0",
+    "Description": "Tracks jumps and shows GIF/audio on milestones.",
+    "ApplicableVersion": "any",
+    "RepoUrl": "https://github.com/kpaget312/Khaunter",
+    "Punchline": "Jump counter that motivates",
+    "DalamudApiLevel": 15,
+    "IsHide": "False",
+    "DownloadLinkInstall": "'@ + $raw + "'",
+    "DownloadLinkTesting": "'@ + $raw + "'",
+    "DownloadLinkUpdate": "'@ + $raw + "'"
+  }
+]
