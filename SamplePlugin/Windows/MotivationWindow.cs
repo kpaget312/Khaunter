@@ -8,6 +8,7 @@ using System.Drawing;
 using System.Drawing.Imaging;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Threading.Tasks;
 using Dalamud.Interface.Windowing;
 using Dalamud.Interface.Textures;
 using Dalamud.Interface.Textures.TextureWraps;
@@ -41,6 +42,7 @@ public class MotivationWindow : Window, IDisposable
     private static extern int mciSendString(string command, StringBuilder? returnString, int returnLength, IntPtr hwndCallback);
 
     private bool debugReported = false;
+    private int frameGeneration = 0;
 
     public MotivationWindow(Plugin plugin) : base(
         "##JumpKhaunter67_Secret_Overlay",
@@ -127,6 +129,8 @@ public class MotivationWindow : Window, IDisposable
                     animationElapsed = 0f;
                     currentFrameIndex = 0;
 
+                    int capturedGen = ++this.frameGeneration;
+
                     using (var img = Image.FromFile(finalAssetPath))
                     {
                         var dims = new FrameDimension(Guid.Empty);
@@ -156,28 +160,58 @@ public class MotivationWindow : Window, IDisposable
                         }
                         catch { }
 
-                        for (int i = 0; i < frameCount; i++)
+                        // Decode first frame synchronously (immediate display)
+                        img.SelectActiveFrame(dims, 0);
+                        using (var bmp0 = new Bitmap(img))
                         {
-                            img.SelectActiveFrame(dims, i);
-                            using (var bmp = new Bitmap(img))
+                            string temp0 = Path.Combine(Path.GetTempPath(), $"jk67_{Guid.NewGuid()}_0.png");
+                            bmp0.Save(temp0, ImageFormat.Png);
+                            var tex0 = Plugin.TextureProvider.GetFromFile(temp0);
+                            lock (frameTextures)
                             {
-                                string temp = Path.Combine(Path.GetTempPath(), $"jk67_{Guid.NewGuid()}_{i}.png");
-                                bmp.Save(temp, ImageFormat.Png);
-                                var tex = Plugin.TextureProvider.GetFromFile(temp);
-                                lock (frameTextures)
-                                {
-                                    frameTextures.Add(tex);
-                                    frameDelaysMs.Add(delays.Length > i && delays[i] > 0 ? delays[i] : 100);
-                                    frameTempFiles.Add(temp);
-                                }
+                                frameTextures.Add(tex0);
+                                frameDelaysMs.Add(delays.Length > 0 && delays[0] > 0 ? delays[0] : 100);
+                                frameTempFiles.Add(temp0);
                             }
+                            this.currentMemeTexture = tex0;
                         }
-                    }
 
-                    lock (frameTextures)
-                    {
-                        if (frameTextures.Count > 0)
-                            this.currentMemeTexture = frameTextures[0];
+                        // Decode remaining frames in background
+                        if (frameCount > 1)
+                        {
+                            var bgDims = dims;
+                            var bgDelays = delays;
+                            var bgPath = finalAssetPath;
+                            _ = Task.Run(() =>
+                            {
+                                for (int i = 1; i < frameCount; i++)
+                                {
+                                    try
+                                    {
+                                        using var img2 = Image.FromFile(bgPath);
+                                        img2.SelectActiveFrame(bgDims, i);
+                                        using var bmp2 = new Bitmap(img2);
+                                        string temp = Path.Combine(Path.GetTempPath(), $"jk67_{Guid.NewGuid()}_{i}.png");
+                                        bmp2.Save(temp, ImageFormat.Png);
+                                        var tex = Plugin.TextureProvider.GetFromFile(temp);
+                                        lock (frameTextures)
+                                        {
+                                            if (this.frameGeneration == capturedGen)
+                                            {
+                                                frameTextures.Add(tex);
+                                                frameDelaysMs.Add(bgDelays.Length > i && bgDelays[i] > 0 ? bgDelays[i] : 100);
+                                                frameTempFiles.Add(temp);
+                                            }
+                                            else
+                                            {
+                                                try { File.Delete(temp); } catch { }
+                                            }
+                                        }
+                                    }
+                                    catch { }
+                                }
+                            });
+                        }
                     }
                 }
                 else
@@ -197,13 +231,15 @@ public class MotivationWindow : Window, IDisposable
     {
         this.currentMemeTexture = null;
         this.lastTextureValid = false;
+        this.frameGeneration++;
         lock (frameTextures)
         {
             frameTextures.Clear();
             frameDelaysMs.Clear();
         }
-        foreach (var f in frameTempFiles) { try { File.Delete(f); } catch { } }
-        frameTempFiles.Clear();
+        var stale = frameTempFiles;
+        frameTempFiles = new List<string>();
+        foreach (var f in stale) { try { File.Delete(f); } catch { } }
     }
 
     private void PlayRandomMilestoneAudio()
