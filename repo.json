@@ -10,8 +10,8 @@
     "Punchline": "Jump counter that motivates",
     "DalamudApiLevel": 15,
     "IsHide": "False",
-    "DownloadLinkInstall": "" + https://raw.githubusercontent.com/kpaget312/Khaunter/main/releases/JumpKhaunter67-1.0.0.zip + "",
-    "DownloadLinkTesting": "" + https://raw.githubusercontent.com/kpaget312/Khaunter/main/releases/JumpKhaunter67-1.0.0.zip + "",
-    "DownloadLinkUpdate": "" + https://raw.githubusercontent.com/kpaget312/Khaunter/main/releases/JumpKhaunter67-1.0.0.zip + ""
+    "DownloadLinkInstall": "https://raw.githubusercontent.com/kpaget312/Khaunter/main/releases/JumpKhaunter67.1.0.0.nupkg",
+    "DownloadLinkTesting": "https://raw.githubusercontent.com/kpaget312/Khaunter/main/releases/JumpKhaunter67.1.0.0.nupkg",
+    "DownloadLinkUpdate": "https://raw.githubusercontent.com/kpaget312/Khaunter/main/releases/JumpKhaunter67.1.0.0.nupkg"
   }
 ]
