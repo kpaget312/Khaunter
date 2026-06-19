@@ -52,8 +52,8 @@ public class MotivationWindow : Window, IDisposable
         ImGuiWindowFlags.NoDecoration | 
         ImGuiWindowFlags.NoBackground | 
         ImGuiWindowFlags.NoMove |
-        ImGuiWindowFlags.NoInputs | 
-        ImGuiWindowFlags.NoNav |
+        ImGuiWindowFlags.NoMouseInputs |
+        ImGuiWindowFlags.NoNavFocus |
         ImGuiWindowFlags.NoSavedSettings)
     {
         this.plugin = plugin;
@@ -367,12 +367,10 @@ public class MotivationWindow : Window, IDisposable
         {
             var sb = new StringBuilder(32);
             int ret = mciSendString($"status {MciAlias} ready", sb, sb.Capacity, IntPtr.Zero);
-            AudioLog($"StopMciAudio: status ready ret={ret} sb={sb}");
             if (ret == 0 && sb.ToString().Trim() == "true")
             {
                 mciSendString($"stop {MciAlias}", null, 0, IntPtr.Zero);
                 mciSendString($"close {MciAlias}", null, 0, IntPtr.Zero);
-                AudioLog("StopMciAudio: stopped and closed");
             }
         }
         catch { }
@@ -384,10 +382,8 @@ public class MotivationWindow : Window, IDisposable
         {
             var sb = new StringBuilder(32);
             int ret = mciSendString($"status {MciAlias} mode", sb, sb.Capacity, IntPtr.Zero);
-            var mode = sb.ToString().Trim();
-            AudioLog($"IsMciAudioPlaying: ret={ret} mode='{mode}'");
             if (ret == 0)
-                return string.Equals(mode, "playing", StringComparison.OrdinalIgnoreCase);
+                return string.Equals(sb.ToString().Trim(), "playing", StringComparison.OrdinalIgnoreCase);
         }
         catch { }
         return false;
@@ -409,6 +405,9 @@ public class MotivationWindow : Window, IDisposable
     {
         try
         {
+            // Bring overlay to front while visible so config window doesn't cover it
+            ImGui.SetNextWindowFocus();
+
             // Update animation timing
             float dt = ImGui.GetIO().DeltaTime;
             // Ensure first decoded frame is used for display if currentMemeTexture wasn't set during decode
@@ -466,8 +465,7 @@ public class MotivationWindow : Window, IDisposable
 
             // Close overlay when timer expired and no audio playing
             if (this.displayTimer > 0f) this.displayTimer -= dt;
-            if (!this.audioPlaying)
-                this.audioPlaying = IsMciAudioPlaying();
+            this.audioPlaying = IsMciAudioPlaying();
 
             if (this.displayTimer <= 0f && !this.audioPlaying)
             {

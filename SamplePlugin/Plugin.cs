@@ -84,8 +84,6 @@ public sealed class Plugin : IDalamudPlugin
     {
         if (count == 67 || (count > 67 && (count - 67) % 300 == 0))
         {
-            // Ensure the configuration window stays closed when a milestone fires
-            try { this.configWindow.IsOpen = false; } catch { }
             this.motivationWindow.TriggerMilestone(count);
         }
     }
