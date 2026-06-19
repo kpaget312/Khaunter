@@ -42,8 +42,6 @@ public class MotivationWindow : Window, IDisposable
     [DllImport("winmm.dll", EntryPoint = "mciSendStringW", CharSet = CharSet.Unicode, ExactSpelling = true)]
     private static extern int mciSendString(string command, StringBuilder? returnString, int returnLength, IntPtr hwndCallback);
 
-    private CancellationTokenSource? decodeCts;
-
     private bool debugReported = false;
 
     // Simple file logger for diagnostics (disabled)
@@ -139,97 +137,29 @@ public class MotivationWindow : Window, IDisposable
             {
                 if (string.Equals(Path.GetExtension(finalAssetPath), ".gif", StringComparison.OrdinalIgnoreCase))
                 {
-                    // Cancel any previous GIF decoding task
-                    try { this.decodeCts?.Cancel(); } catch { }
-                    this.decodeCts = new CancellationTokenSource();
-                    var ct = this.decodeCts.Token;
+                    lock (frameTextures)
+                    {
+                        frameTextures.Clear();
+                        frameDelaysMs.Clear();
+                    }
+                    animationElapsed = 0f;
+                    currentFrameIndex = 0;
 
                     try
                     {
-                        lock (frameTextures)
-                        {
-                            frameTextures.Clear();
-                            frameDelaysMs.Clear();
-                        }
-                        animationElapsed = 0f;
-                        currentFrameIndex = 0;
-
                         using (var img = Image.FromFile(finalAssetPath))
                         {
-                            FrameDimension dims;
-                            int frameCount = 1;
-                            try
-                            {
-                                var fdList = img.FrameDimensionsList;
-                                if (fdList != null && fdList.Length > 0)
-                                {
-                                    dims = new FrameDimension(fdList[0]);
-                                    frameCount = img.GetFrameCount(dims);
-                                }
-                                else
-                                {
-                                    dims = new FrameDimension(Guid.Empty);
-                                    frameCount = 1;
-                                }
-                            }
-                            catch { dims = new FrameDimension(Guid.Empty); frameCount = 1; }
-
-                            int[] delays = new int[frameCount];
-                            PropertyItem? prop = null;
-                            try { prop = img.GetPropertyItem(0x5100); } catch { prop = null; }
-                            try
-                            {
-                                var raw = prop?.Value;
-                                if (raw != null && raw.Length >= 4)
-                                {
-                                    delays = new int[raw.Length / 4];
-                                    for (int i = 0; i < delays.Length; i++)
-                                        delays[i] = BitConverter.ToInt32(raw, i * 4) * 10;
-                                }
-                                else
-                                {
-                                    for (int i = 0; i < frameCount; i++) delays[i] = 100;
-                                }
-                            }
-                            catch { for (int i = 0; i < frameCount; i++) delays[i] = 100; }
-
-                            img.SelectActiveFrame(dims, 0);
+                            img.SelectActiveFrame(new FrameDimension(img.FrameDimensionsList?[0] ?? Guid.Empty), 0);
                             using (var bmp = new Bitmap(img))
                             {
-                                string temp0 = Path.Combine(Path.GetTempPath(), $"jk67_{Guid.NewGuid()}_0.png");
-                                bmp.Save(temp0, ImageFormat.Png);
-                                var tex0 = Plugin.TextureProvider.GetFromFile(temp0);
-                                lock (frameTextures) { frameTextures.Add(tex0); frameDelaysMs.Add(delays.Length>0?delays[0]:100); frameTempFiles.Add(temp0); }
-                            }
-
-                            if (frameCount > 1 && !ct.IsCancellationRequested)
-                            {
-                                _ = Task.Run(() =>
-                                {
-                                    try
-                                    {
-                                        for (int i = 1; i < frameCount; i++)
-                                        {
-                                            if (ct.IsCancellationRequested) break;
-                                            try
-                                            {
-                                                using var img2 = Image.FromFile(finalAssetPath);
-                                                img2.SelectActiveFrame(dims, i);
-                                                using var bmp2 = new Bitmap(img2);
-                                                string temp = Path.Combine(Path.GetTempPath(), $"jk67_{Guid.NewGuid()}_{i}.png");
-                                                bmp2.Save(temp, ImageFormat.Png);
-                                                var tex = Plugin.TextureProvider.GetFromFile(temp);
-                                                lock (frameTextures) { frameTextures.Add(tex); frameDelaysMs.Add(delays.Length>i?delays[i]:100); frameTempFiles.Add(temp); }
-                                            }
-                                            catch (Exception fex) { System.Diagnostics.Trace.WriteLine(fex.Message); }
-                                        }
-                                    }
-                                    catch (Exception ex2) { System.Diagnostics.Trace.WriteLine(ex2.Message); }
-                                }, ct);
+                                string temp = Path.Combine(Path.GetTempPath(), $"jk67_{Guid.NewGuid()}.png");
+                                bmp.Save(temp, ImageFormat.Png);
+                                this.currentMemeTexture = Plugin.TextureProvider.GetFromFile(temp);
+                                frameTempFiles.Add(temp);
                             }
                         }
                     }
-                    catch (Exception ex) { System.Diagnostics.Trace.WriteLine(ex.Message); }
+                    catch { }
                 }
                 else
                 {
@@ -354,8 +284,6 @@ public class MotivationWindow : Window, IDisposable
 
     public void Dispose()
     {
-        try { this.decodeCts?.Cancel(); } catch { }
-        this.decodeCts?.Dispose();
         StopMciAudio();
         this.audioPlaying = false;
         this.currentMemeTexture = null;
