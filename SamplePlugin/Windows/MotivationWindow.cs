@@ -8,6 +8,7 @@ using System.Drawing;
 using System.Drawing.Imaging;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Threading;
 using Dalamud.Interface.Windowing;
 using Dalamud.Interface.Textures;
 using Dalamud.Interface.Textures.TextureWraps;
@@ -41,7 +42,8 @@ public class MotivationWindow : Window, IDisposable
     [DllImport("winmm.dll", EntryPoint = "mciSendStringW", CharSet = CharSet.Unicode, ExactSpelling = true)]
     private static extern int mciSendString(string command, StringBuilder? returnString, int returnLength, IntPtr hwndCallback);
 
-    // Debug report guard to avoid chat spam
+    private CancellationTokenSource? decodeCts;
+
     private bool debugReported = false;
 
     // Simple file logger for diagnostics (disabled)
@@ -137,11 +139,18 @@ public class MotivationWindow : Window, IDisposable
             {
                 if (string.Equals(Path.GetExtension(finalAssetPath), ".gif", StringComparison.OrdinalIgnoreCase))
                 {
-                    // Load first frame synchronously to avoid long freeze, decode rest in background
+                    // Cancel any previous GIF decoding task
+                    try { this.decodeCts?.Cancel(); } catch { }
+                    this.decodeCts = new CancellationTokenSource();
+                    var ct = this.decodeCts.Token;
+
                     try
                     {
-                        frameTextures.Clear();
-                        frameDelaysMs.Clear();
+                        lock (frameTextures)
+                        {
+                            frameTextures.Clear();
+                            frameDelaysMs.Clear();
+                        }
                         animationElapsed = 0f;
                         currentFrameIndex = 0;
 
@@ -175,7 +184,7 @@ public class MotivationWindow : Window, IDisposable
                                 {
                                     delays = new int[raw.Length / 4];
                                     for (int i = 0; i < delays.Length; i++)
-                                        delays[i] = BitConverter.ToInt32(raw, i * 4) * 10; // to ms
+                                        delays[i] = BitConverter.ToInt32(raw, i * 4) * 10;
                                 }
                                 else
                                 {
@@ -184,7 +193,6 @@ public class MotivationWindow : Window, IDisposable
                             }
                             catch { for (int i = 0; i < frameCount; i++) delays[i] = 100; }
 
-                            // Extract and load first frame quickly
                             img.SelectActiveFrame(dims, 0);
                             using (var bmp = new Bitmap(img))
                             {
@@ -192,11 +200,9 @@ public class MotivationWindow : Window, IDisposable
                                 bmp.Save(temp0, ImageFormat.Png);
                                 var tex0 = Plugin.TextureProvider.GetFromFile(temp0);
                                 lock (frameTextures) { frameTextures.Add(tex0); frameDelaysMs.Add(delays.Length>0?delays[0]:100); frameTempFiles.Add(temp0); }
-                                // keep temp0 until Dispose to ensure TextureProvider can finish loading; will delete later (frameTempFiles list stores it)
                             }
 
-                            // Start background decoding for remaining frames
-                            if (frameCount > 1)
+                            if (frameCount > 1 && !ct.IsCancellationRequested)
                             {
                                 _ = Task.Run(() =>
                                 {
@@ -204,6 +210,7 @@ public class MotivationWindow : Window, IDisposable
                                     {
                                         for (int i = 1; i < frameCount; i++)
                                         {
+                                            if (ct.IsCancellationRequested) break;
                                             try
                                             {
                                                 using var img2 = Image.FromFile(finalAssetPath);
@@ -213,13 +220,12 @@ public class MotivationWindow : Window, IDisposable
                                                 bmp2.Save(temp, ImageFormat.Png);
                                                 var tex = Plugin.TextureProvider.GetFromFile(temp);
                                                 lock (frameTextures) { frameTextures.Add(tex); frameDelaysMs.Add(delays.Length>i?delays[i]:100); frameTempFiles.Add(temp); }
-                                                // keep temp until Dispose to ensure TextureProvider can finish loading; will delete later (frameTempFiles list stores it)
                                             }
                                             catch (Exception fex) { System.Diagnostics.Trace.WriteLine(fex.Message); }
                                         }
                                     }
                                     catch (Exception ex2) { System.Diagnostics.Trace.WriteLine(ex2.Message); }
-                                });
+                                }, ct);
                             }
                         }
                     }
@@ -348,12 +354,17 @@ public class MotivationWindow : Window, IDisposable
 
     public void Dispose()
     {
+        try { this.decodeCts?.Cancel(); } catch { }
+        this.decodeCts?.Dispose();
         StopMciAudio();
         this.audioPlaying = false;
         this.currentMemeTexture = null;
-        foreach (var t in frameTextures) { try { /* no dispose available */ } catch { } }
-        frameTextures.Clear();
-        frameDelaysMs.Clear();
+        lock (frameTextures)
+        {
+            foreach (var t in frameTextures) { try { /* no dispose available */ } catch { } }
+            frameTextures.Clear();
+            frameDelaysMs.Clear();
+        }
         foreach (var f in frameTempFiles) { try { File.Delete(f); } catch { } }
         frameTempFiles.Clear();
     }
@@ -365,9 +376,12 @@ public class MotivationWindow : Window, IDisposable
             // Update animation timing
             float dt = ImGui.GetIO().DeltaTime;
             // Ensure first decoded frame is used for display if currentMemeTexture wasn't set during decode
-            if (this.currentMemeTexture == null && this.frameTextures.Count > 0)
+            lock (frameTextures)
             {
-                this.currentMemeTexture = this.frameTextures[0];
+                if (this.currentMemeTexture == null && this.frameTextures.Count > 0)
+                {
+                    this.currentMemeTexture = this.frameTextures[0];
+                }
             }
 
             // Diagnostics: report once if rendering can't proceed
@@ -405,15 +419,18 @@ public class MotivationWindow : Window, IDisposable
                 this.debugReported = true;
             }
 
-            if (frameTextures.Count > 1)
+            lock (frameTextures)
             {
-                animationElapsed += dt * 1000f;
-                int delay = frameDelaysMs[currentFrameIndex];
-                if (animationElapsed >= delay)
+                if (frameTextures.Count > 1)
                 {
-                    animationElapsed -= delay;
-                    currentFrameIndex = (currentFrameIndex + 1) % frameTextures.Count;
-                    currentMemeTexture = frameTextures[currentFrameIndex];
+                    animationElapsed += dt * 1000f;
+                    int delay = frameDelaysMs[currentFrameIndex];
+                    if (animationElapsed >= delay)
+                    {
+                        animationElapsed -= delay;
+                        currentFrameIndex = (currentFrameIndex + 1) % frameTextures.Count;
+                        currentMemeTexture = frameTextures[currentFrameIndex];
+                    }
                 }
             }
 

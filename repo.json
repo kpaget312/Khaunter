@@ -1,9 +1,9 @@
 ﻿[
   {
-    "Author": "kpaget312",
+    "Author": "RR",
     "Name": "JumpKhaunter67",
     "InternalName": "JumpKhaunter67",
-    "AssemblyVersion": "1.0.0.0",
+    "AssemblyVersion": "1.0.0.67",
     "Description": "Tracks jumps and shows GIF/audio on milestones.",
     "ApplicableVersion": "any",
     "RepoUrl": "https://github.com/kpaget312/Khaunter",
