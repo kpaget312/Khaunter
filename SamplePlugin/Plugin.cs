@@ -4,7 +4,6 @@ using Dalamud.Plugin.Services;
 using Dalamud.Interface.Windowing;
 using JumpKhaunter67.Windows;
 using System;
-using System.Numerics;
 
 namespace JumpKhaunter67;
 
@@ -22,18 +21,13 @@ public sealed class Plugin : IDalamudPlugin
     private readonly ConfigWindow configWindow;
     public Configuration Configuration { get; private set; }
 
-    private static IObjectTable? ObjectTable;
-    private bool wasAirborneLastFrame = false;
+    private bool isAirborne = false;
     private DateTime lastJumpTime = DateTime.MinValue;
-    private float lastPlayerY = 0f;
-    private bool wasAscending = false;
 
     public Plugin()
     {
         this.Configuration = PluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
         this.Configuration.Initialize(PluginInterface);
-
-        try { ObjectTable = (IObjectTable?)PluginInterface.GetService(typeof(IObjectTable)); } catch { ObjectTable = null; }
 
         this.motivationWindow = new MotivationWindow(this);
         this.configWindow = new ConfigWindow(this);
@@ -58,46 +52,22 @@ public sealed class Plugin : IDalamudPlugin
         if (!ClientState.IsLoggedIn) return;
 
         bool currentlyAirborne = Condition[Dalamud.Game.ClientState.Conditions.ConditionFlag.Jumping];
-
-        // Rising edge of the Jumping condition flag (normal detection path)
-        bool flagRisingEdge = currentlyAirborne && !this.wasAirborneLastFrame;
-        this.wasAirborneLastFrame = currentlyAirborne;
-
-        // Y-velocity detection: catches new jumps even when the condition flag stays true (spam)
-        bool isAscending = false;
-        if (ObjectTable != null)
-        {
-            var player = ObjectTable[0];
-            float currentY = player?.Position.Y ?? this.lastPlayerY;
-            float yDiff = currentY - this.lastPlayerY;
-            this.lastPlayerY = currentY;
-
-            isAscending = yDiff > 0.03f;
-        }
-        else
-        {
-            // Fallback: reset Y state on landing when ObjectTable unavailable
-            if (!currentlyAirborne)
-                this.wasAscending = false;
-        }
-
-        bool newAscension = isAscending && !this.wasAscending;
-        this.wasAscending = isAscending;
-
         var elapsedMs = (DateTime.Now - this.lastJumpTime).TotalMilliseconds;
         const double debounceMs = 75.0;
 
-        bool jumpDetected =
-            (flagRisingEdge || (newAscension && currentlyAirborne)) &&
-            elapsedMs > debounceMs;
-
-        if (jumpDetected)
+        if (currentlyAirborne && !this.isAirborne && elapsedMs > debounceMs)
         {
-            lastJumpTime = DateTime.Now;
+            this.isAirborne = true;
+            this.lastJumpTime = DateTime.Now;
             this.Configuration.LifetimeJumps++;
             this.Configuration.Save();
 
             CheckMilestones(this.Configuration.LifetimeJumps);
+        }
+        else if (!currentlyAirborne && this.isAirborne)
+        {
+            this.isAirborne = false;
+            this.lastJumpTime = DateTime.Now;
         }
     }
 
