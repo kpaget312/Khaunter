@@ -78,7 +78,10 @@ public sealed class Plugin : IDalamudPlugin
 
             bool isAscending = yDiff > 0.03f;
             bool newAscension = isAscending && !this.wasAscending;
-            this.wasAscending = isAscending;
+            if (isAscending)
+                this.wasAscending = true;
+            else if (yDiff < -0.03f || !currentlyAirborne)
+                this.wasAscending = false;
 
             if (!jumpDetected && newAscension && currentlyAirborne && elapsedMs > debounceMs)
                 jumpDetected = true;
