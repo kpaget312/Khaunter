@@ -1,4 +1,4 @@
-using JumpKhaunter67;
+﻿using JumpKhaunter67;
 using System;
 using System.IO;
 using System.Reflection;
@@ -34,7 +34,7 @@ public class MotivationWindow : Window, IDisposable
     private Dalamud.Bindings.ImGui.ImTextureID lastTextureHandle = default;
     private bool lastTextureValid = false;
 
-    // Windows MCI audio playback (winmm.dll, built-in, no external dependencies)
+    // Windows MCI audio playback (winmm.dll)
     private const string MciAlias = "jk67_audio";
     private bool audioPlaying = false;
 
@@ -160,7 +160,7 @@ public class MotivationWindow : Window, IDisposable
                         }
                         catch { }
 
-                        // Decode first frame synchronously (immediate display)
+                        // Decode first frame synchronously
                         img.SelectActiveFrame(dims, 0);
                         using (var bmp0 = new Bitmap(img))
                         {
@@ -442,7 +442,7 @@ public class MotivationWindow : Window, IDisposable
     {
         try
         {
-            // Update animation timing
+            // Animation timing
             float dt = ImGui.GetIO().DeltaTime;
             // Ensure first decoded frame is used for display if currentMemeTexture wasn't set during decode
             lock (frameTextures)
@@ -516,14 +516,13 @@ public class MotivationWindow : Window, IDisposable
             }
 
             var viewport = ImGui.GetMainViewport();
-            // Increase GIF size by 40% (previous scale 0.25 -> now 0.35)
+            // GIF Size
             float scale = 0.504f;
             Vector2 imageSize = new Vector2(400, 400) * scale;
 
-            // compute window size and position centered near top � add larger padding so image isn't clipped
+            // compute window size and position
             Vector2 totalSize = imageSize + new Vector2(80, 80);
             ImGui.SetNextWindowSize(totalSize, ImGuiCond.Always);
-            // Also set Dalamud window size and position so the WindowSystem doesn't clip content
             this.Size = totalSize;
             this.SizeCondition = ImGuiCond.Always;
             var pos = new Vector2(viewport.WorkPos.X + (viewport.WorkSize.X - totalSize.X) / 2, viewport.WorkPos.Y + 20);
@@ -531,7 +530,6 @@ public class MotivationWindow : Window, IDisposable
             this.PositionCondition = ImGuiCond.Always;
             ImGui.SetNextWindowPos(pos, ImGuiCond.Always);
 
-            // Prefer to draw the active wrap; fall back to lastTextureHandle if the current texture hasn't produced a wrap yet
             IDalamudTextureWrap? wrapToDraw = null;
             bool haveWrap = false;
             lock (this.textureLock)
@@ -547,7 +545,7 @@ public class MotivationWindow : Window, IDisposable
             }
             }
 
-            // Draw meme image (gif) centered in the window (milestone header removed)
+            // Draw Shrek
             ImGui.SetCursorPosX((totalSize.X - imageSize.X) / 2f);
             if (wrapToDraw != null)
             {
