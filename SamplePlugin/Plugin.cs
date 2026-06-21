@@ -18,7 +18,7 @@ public sealed class Plugin : IDalamudPlugin
     [PluginService] public static ITextureProvider TextureProvider { get; private set; } = null!; // Injected TextureProvider as static
 
     public readonly WindowSystem WindowSystem = new("JumpKhaunter67");
-    private readonly MotivationWindow motivationWindow;
+    internal readonly MotivationWindow motivationWindow;
     private readonly ConfigWindow configWindow;
     public Configuration Configuration { get; private set; }
 

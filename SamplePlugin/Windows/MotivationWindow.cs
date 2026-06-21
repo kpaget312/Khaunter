@@ -306,6 +306,91 @@ public class MotivationWindow : Window, IDisposable
                     if (retPlay == 0)
                     {
                         this.audioPlaying = true;
+                        SetVolume(this.plugin.Configuration.Volume);
+                        break;
+                    }
+                    else
+                    {
+                        mciSendString($"close {MciAlias}", null, 0, IntPtr.Zero);
+                    }
+                }
+            }
+        }
+        catch { }
+    }
+
+    public void SetVolume(int volume)
+    {
+        try
+        {
+            var clamped = Math.Clamp(volume, 0, 100);
+            mciSendString($"setaudio {MciAlias} volume to {clamped * 10}", null, 0, IntPtr.Zero);
+        }
+        catch { }
+    }
+
+    public void PlayTestAudio()
+    {
+        try
+        {
+            string selectedAudioPath = string.Empty;
+
+            var dir = this.pluginDirectory;
+            int depth = 0;
+            while (!string.IsNullOrEmpty(dir) && depth < 6)
+            {
+                var candidate = Path.Combine(dir, "audio");
+                if (Directory.Exists(candidate))
+                {
+                    var mp3Files = Directory.GetFiles(candidate, "*.mp3");
+                    if (mp3Files.Length > 0)
+                    {
+                        selectedAudioPath = mp3Files[this.random.Next(0, mp3Files.Length)];
+                        break;
+                    }
+                }
+                var parent = Directory.GetParent(dir);
+                dir = parent?.FullName ?? string.Empty;
+                depth++;
+            }
+
+            if (string.IsNullOrEmpty(selectedAudioPath))
+            {
+                try
+                {
+                    var asm = Assembly.GetExecutingAssembly();
+                    var res = asm.GetManifestResourceNames();
+                    var mp3s = Array.FindAll(res, r => r.EndsWith(".mp3", StringComparison.OrdinalIgnoreCase));
+                    if (mp3s.Length > 0)
+                    {
+                        var pick = mp3s[this.random.Next(mp3s.Length)];
+                        var tempMp3 = Path.Combine(Path.GetTempPath(), $"jk67_emb_{Guid.NewGuid()}.mp3");
+                        using (var rs = asm.GetManifestResourceStream(pick))
+                        {
+                            if (rs != null) { using var fs = File.OpenWrite(tempMp3); rs.CopyTo(fs); selectedAudioPath = tempMp3; }
+                        }
+                    }
+                }
+                catch { }
+            }
+
+            if (string.IsNullOrEmpty(selectedAudioPath)) return;
+
+            StopMciAudio();
+            this.audioPlaying = false;
+
+            foreach (var typeSpec in new[] { "", "type mpegvideo", "type waveaudio" })
+            {
+                var cmd = string.IsNullOrEmpty(typeSpec)
+                    ? $"open \"{selectedAudioPath}\" alias {MciAlias}"
+                    : $"open \"{selectedAudioPath}\" {typeSpec} alias {MciAlias}";
+                int ret = mciSendString(cmd, null, 0, IntPtr.Zero);
+                if (ret == 0)
+                {
+                    int retPlay = mciSendString($"play {MciAlias}", null, 0, IntPtr.Zero);
+                    if (retPlay == 0)
+                    {
+                        SetVolume(this.plugin.Configuration.Volume);
                         break;
                     }
                     else
