@@ -63,12 +63,8 @@ public sealed class Plugin : IDalamudPlugin
         bool flagRisingEdge = currentlyAirborne && !this.wasAirborneLastFrame;
         this.wasAirborneLastFrame = currentlyAirborne;
 
-        var elapsedMs = (DateTime.Now - this.lastJumpTime).TotalMilliseconds;
-        const double debounceMs = 75.0;
-
-        bool jumpDetected = flagRisingEdge && elapsedMs > debounceMs;
-
-        // Y-velocity tracking: works with ObjectTable when available, skipped when null
+        // Y-velocity detection: catches new jumps even when the condition flag stays true (spam)
+        bool isAscending = false;
         if (ObjectTable != null)
         {
             var player = ObjectTable[0];
@@ -76,22 +72,24 @@ public sealed class Plugin : IDalamudPlugin
             float yDiff = currentY - this.lastPlayerY;
             this.lastPlayerY = currentY;
 
-            bool isAscending = yDiff > 0.03f;
-            bool newAscension = isAscending && !this.wasAscending;
-            if (isAscending)
-                this.wasAscending = true;
-            else if (yDiff < -0.03f || !currentlyAirborne)
-                this.wasAscending = false;
-
-            if (!jumpDetected && newAscension && currentlyAirborne && elapsedMs > debounceMs)
-                jumpDetected = true;
+            isAscending = yDiff > 0.03f;
         }
         else
         {
-            // Fallback: rising-edge only, reset Y state on landing
+            // Fallback: reset Y state on landing when ObjectTable unavailable
             if (!currentlyAirborne)
                 this.wasAscending = false;
         }
+
+        bool newAscension = isAscending && !this.wasAscending;
+        this.wasAscending = isAscending;
+
+        var elapsedMs = (DateTime.Now - this.lastJumpTime).TotalMilliseconds;
+        const double debounceMs = 75.0;
+
+        bool jumpDetected =
+            (flagRisingEdge || (newAscension && currentlyAirborne)) &&
+            elapsedMs > debounceMs;
 
         if (jumpDetected)
         {
