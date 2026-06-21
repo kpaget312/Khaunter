@@ -4,7 +4,7 @@ using Dalamud.Plugin.Services;
 using Dalamud.Interface.Windowing;
 using JumpKhaunter67.Windows;
 using System;
-using Dalamud.Game.ClientState.Objects.Types; using System.Numerics;
+using System.Numerics;
 
 namespace JumpKhaunter67;
 
@@ -17,13 +17,12 @@ public sealed class Plugin : IDalamudPlugin
     [PluginService] public static ICommandManager CommandManager { get; private set; } = null!;
     [PluginService] public static IChatGui ChatGui { get; private set; } = null!;
     [PluginService] public static ITextureProvider TextureProvider { get; private set; } = null!;
-    [PluginService] public static IObjectTable ObjectTable { get; private set; } = null!;
-
     public readonly WindowSystem WindowSystem = new("JumpKhaunter67");
     internal readonly MotivationWindow motivationWindow;
     private readonly ConfigWindow configWindow;
     public Configuration Configuration { get; private set; }
 
+    private static IObjectTable? ObjectTable;
     private bool wasAirborneLastFrame = false;
     private DateTime lastJumpTime = DateTime.MinValue;
     private float lastPlayerY = 0f;
@@ -33,6 +32,8 @@ public sealed class Plugin : IDalamudPlugin
     {
         this.Configuration = PluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
         this.Configuration.Initialize(PluginInterface);
+
+        try { ObjectTable = (IObjectTable?)PluginInterface.GetService(typeof(IObjectTable)); } catch { ObjectTable = null; }
 
         this.motivationWindow = new MotivationWindow(this);
         this.configWindow = new ConfigWindow(this);
@@ -62,22 +63,32 @@ public sealed class Plugin : IDalamudPlugin
         bool flagRisingEdge = currentlyAirborne && !this.wasAirborneLastFrame;
         this.wasAirborneLastFrame = currentlyAirborne;
 
-        // Y-velocity detection: catches new jumps even when the condition flag stays true (spam)
-        var player = ObjectTable[0];
-        float currentY = player?.Position.Y ?? this.lastPlayerY;
-        float yDiff = currentY - this.lastPlayerY;
-        this.lastPlayerY = currentY;
-
-        bool isAscending = yDiff > 0.03f;
-        bool newAscension = isAscending && !this.wasAscending;
-        this.wasAscending = isAscending;
-
         var elapsedMs = (DateTime.Now - this.lastJumpTime).TotalMilliseconds;
         const double debounceMs = 75.0;
 
-        bool jumpDetected =
-            (flagRisingEdge || (newAscension && currentlyAirborne)) &&
-            elapsedMs > debounceMs;
+        bool jumpDetected = flagRisingEdge && elapsedMs > debounceMs;
+
+        // Y-velocity tracking: works with ObjectTable when available, skipped when null
+        if (ObjectTable != null)
+        {
+            var player = ObjectTable[0];
+            float currentY = player?.Position.Y ?? this.lastPlayerY;
+            float yDiff = currentY - this.lastPlayerY;
+            this.lastPlayerY = currentY;
+
+            bool isAscending = yDiff > 0.03f;
+            bool newAscension = isAscending && !this.wasAscending;
+            this.wasAscending = isAscending;
+
+            if (!jumpDetected && newAscension && currentlyAirborne && elapsedMs > debounceMs)
+                jumpDetected = true;
+        }
+        else
+        {
+            // Fallback: rising-edge only, reset Y state on landing
+            if (!currentlyAirborne)
+                this.wasAscending = false;
+        }
 
         if (jumpDetected)
         {
