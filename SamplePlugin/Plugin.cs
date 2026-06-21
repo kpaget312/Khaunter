@@ -68,9 +68,7 @@ public sealed class Plugin : IDalamudPlugin
         }
         else if (!currentlyAirborne && isAirborne)
         {
-            // On landing, mark airborne false and update lastJumpTime to guard against immediate re-counts
             isAirborne = false;
-            lastJumpTime = DateTime.Now;
         }
     }
 
