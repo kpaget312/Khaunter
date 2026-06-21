@@ -4,6 +4,7 @@ using Dalamud.Plugin.Services;
 using Dalamud.Interface.Windowing;
 using JumpKhaunter67.Windows;
 using System;
+using Dalamud.Game.ClientState.Objects.Types; using System.Numerics;
 
 namespace JumpKhaunter67;
 
@@ -14,16 +15,19 @@ public sealed class Plugin : IDalamudPlugin
     [PluginService] public static IClientState ClientState { get; private set; } = null!;
     [PluginService] public static ICondition Condition { get; private set; } = null!;
     [PluginService] public static ICommandManager CommandManager { get; private set; } = null!;
-    [PluginService] public static IChatGui ChatGui { get; private set; } = null!; // Fixed Chat Error
-    [PluginService] public static ITextureProvider TextureProvider { get; private set; } = null!; // Injected TextureProvider as static
+    [PluginService] public static IChatGui ChatGui { get; private set; } = null!;
+    [PluginService] public static ITextureProvider TextureProvider { get; private set; } = null!;
+    [PluginService] public static IObjectTable ObjectTable { get; private set; } = null!;
 
     public readonly WindowSystem WindowSystem = new("JumpKhaunter67");
     internal readonly MotivationWindow motivationWindow;
     private readonly ConfigWindow configWindow;
     public Configuration Configuration { get; private set; }
 
-    private bool isAirborne = false;
+    private bool wasAirborneLastFrame = false;
     private DateTime lastJumpTime = DateTime.MinValue;
+    private float lastPlayerY = 0f;
+    private bool wasAscending = false;
 
     public Plugin()
     {
@@ -53,22 +57,35 @@ public sealed class Plugin : IDalamudPlugin
         if (!ClientState.IsLoggedIn) return;
 
         bool currentlyAirborne = Condition[Dalamud.Game.ClientState.Conditions.ConditionFlag.Jumping];
-        // Debounce rapid inputs: require at least 250ms between counted jumps
+
+        // Rising edge of the Jumping condition flag (normal detection path)
+        bool flagRisingEdge = currentlyAirborne && !this.wasAirborneLastFrame;
+        this.wasAirborneLastFrame = currentlyAirborne;
+
+        // Y-velocity detection: catches new jumps even when the condition flag stays true (spam)
+        var player = ObjectTable[0];
+        float currentY = player?.Position.Y ?? this.lastPlayerY;
+        float yDiff = currentY - this.lastPlayerY;
+        this.lastPlayerY = currentY;
+
+        bool isAscending = yDiff > 0.03f;
+        bool newAscension = isAscending && !this.wasAscending;
+        this.wasAscending = isAscending;
+
         var elapsedMs = (DateTime.Now - this.lastJumpTime).TotalMilliseconds;
         const double debounceMs = 75.0;
 
-        if (currentlyAirborne && !isAirborne && elapsedMs > debounceMs)
+        bool jumpDetected =
+            (flagRisingEdge || (newAscension && currentlyAirborne)) &&
+            elapsedMs > debounceMs;
+
+        if (jumpDetected)
         {
-            isAirborne = true;
             lastJumpTime = DateTime.Now;
             this.Configuration.LifetimeJumps++;
             this.Configuration.Save();
 
             CheckMilestones(this.Configuration.LifetimeJumps);
-        }
-        else if (!currentlyAirborne && isAirborne)
-        {
-            isAirborne = false;
         }
     }
 
