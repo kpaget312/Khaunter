@@ -4,6 +4,7 @@ using System.IO;
 using System.Reflection;
 using System.Numerics;
 using System.Collections.Generic;
+using System.Linq;
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.Runtime.InteropServices;
@@ -255,10 +256,11 @@ public class MotivationWindow : Window, IDisposable
                 var candidate = Path.Combine(dir, "audio");
                 if (Directory.Exists(candidate))
                 {
-                    var mp3Files = Directory.GetFiles(candidate, "*.mp3");
-                    if (mp3Files.Length > 0)
+                    var audioExts = new[] { "*.mp3", "*.m4a" };
+                    var audioFiles = audioExts.SelectMany(e => Directory.GetFiles(candidate, e)).ToArray();
+                    if (audioFiles.Length > 0)
                     {
-                        selectedAudioPath = mp3Files[this.random.Next(0, mp3Files.Length)];
+                        selectedAudioPath = audioFiles[this.random.Next(0, audioFiles.Length)];
                         break;
                     }
                 }
@@ -274,15 +276,15 @@ public class MotivationWindow : Window, IDisposable
                 {
                     var asm = Assembly.GetExecutingAssembly();
                     var res = asm.GetManifestResourceNames();
-                    var mp3s = Array.FindAll(res, r => r.EndsWith(".mp3", StringComparison.OrdinalIgnoreCase));
-                    if (mp3s.Length > 0)
+                    var audioRes = Array.FindAll(res, r => r.EndsWith(".mp3", StringComparison.OrdinalIgnoreCase) || r.EndsWith(".m4a", StringComparison.OrdinalIgnoreCase));
+                    if (audioRes.Length > 0)
                     {
-                        var pick = mp3s[this.random.Next(mp3s.Length)];
+                        var pick = audioRes[this.random.Next(audioRes.Length)];
                         var ext = Path.GetExtension(pick);
-                        var tempMp3 = Path.Combine(Path.GetTempPath(), $"jk67_emb_{Guid.NewGuid()}{ext}");
+                        var tempFile = Path.Combine(Path.GetTempPath(), $"jk67_emb_{Guid.NewGuid()}{ext}");
                         using (var rs = asm.GetManifestResourceStream(pick))
                         {
-                            if (rs != null) { using var fs = File.OpenWrite(tempMp3); rs.CopyTo(fs); selectedAudioPath = tempMp3; }
+                            if (rs != null) { using var fs = File.OpenWrite(tempFile); rs.CopyTo(fs); selectedAudioPath = tempFile; }
                         }
                     }
                 }
@@ -342,13 +344,15 @@ public class MotivationWindow : Window, IDisposable
                 var candidate = Path.Combine(dir, "audio");
                 if (Directory.Exists(candidate))
                 {
-                    var mp3Files = Directory.GetFiles(candidate, "*.mp3");
-                    if (mp3Files.Length > 0)
+                    var audioExts = new[] { "*.mp3", "*.m4a" };
+                    var audioFiles = audioExts.SelectMany(e => Directory.GetFiles(candidate, e)).ToArray();
+                    if (audioFiles.Length > 0)
                     {
-                        selectedAudioPath = mp3Files[this.random.Next(0, mp3Files.Length)];
+                        selectedAudioPath = audioFiles[this.random.Next(0, audioFiles.Length)];
                         break;
                     }
                 }
+
                 var parent = Directory.GetParent(dir);
                 dir = parent?.FullName ?? string.Empty;
                 depth++;
@@ -360,21 +364,22 @@ public class MotivationWindow : Window, IDisposable
                 {
                     var asm = Assembly.GetExecutingAssembly();
                     var res = asm.GetManifestResourceNames();
-                    var mp3s = Array.FindAll(res, r => r.EndsWith(".mp3", StringComparison.OrdinalIgnoreCase));
-                    if (mp3s.Length > 0)
+                    var audioRes = Array.FindAll(res, r => r.EndsWith(".mp3", StringComparison.OrdinalIgnoreCase) || r.EndsWith(".m4a", StringComparison.OrdinalIgnoreCase));
+                    if (audioRes.Length > 0)
                     {
-                        var pick = mp3s[this.random.Next(mp3s.Length)];
-                        var tempMp3 = Path.Combine(Path.GetTempPath(), $"jk67_emb_{Guid.NewGuid()}.mp3");
+                        var pick = audioRes[this.random.Next(audioRes.Length)];
+                        var ext = Path.GetExtension(pick);
+                        var tempFile = Path.Combine(Path.GetTempPath(), $"jk67_emb_{Guid.NewGuid()}{ext}");
                         using (var rs = asm.GetManifestResourceStream(pick))
                         {
-                            if (rs != null) { using var fs = File.OpenWrite(tempMp3); rs.CopyTo(fs); selectedAudioPath = tempMp3; }
+                            if (rs != null) { using var fs = File.OpenWrite(tempFile); rs.CopyTo(fs); selectedAudioPath = tempFile; }
                         }
                     }
                 }
                 catch { }
-            }
 
-            if (string.IsNullOrEmpty(selectedAudioPath)) return;
+                if (string.IsNullOrEmpty(selectedAudioPath)) return;
+            }
 
             StopMciAudio();
             this.audioPlaying = false;
