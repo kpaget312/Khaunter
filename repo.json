@@ -3,15 +3,15 @@
     "Author": "RR",
     "Name": "JumpKhaunter67",
     "InternalName": "JumpKhaunter67",
-    "AssemblyVersion": "1.0.0.80",
+    "AssemblyVersion": "1.0.0.81",
     "Description": "Tracks jumps and shows GIF/audio on milestones.",
     "ApplicableVersion": "any",
     "RepoUrl": "https://github.com/kpaget312/Khaunter",
     "Punchline": "Yo Dawg, I heard you like to jump?",
     "DalamudApiLevel": 15,
     "IsHide": "False",
-    "DownloadLinkInstall": "https://raw.githubusercontent.com/kpaget312/Khaunter/main/releases/JumpKhaunter67-1.0.0.80.zip",
-    "DownloadLinkTesting": "https://raw.githubusercontent.com/kpaget312/Khaunter/main/releases/JumpKhaunter67-1.0.0.80.zip",
-    "DownloadLinkUpdate": "https://raw.githubusercontent.com/kpaget312/Khaunter/main/releases/JumpKhaunter67-1.0.0.80.zip"
+    "DownloadLinkInstall": "https://raw.githubusercontent.com/kpaget312/Khaunter/main/releases/JumpKhaunter67-1.0.0.81.zip",
+    "DownloadLinkTesting": "https://raw.githubusercontent.com/kpaget312/Khaunter/main/releases/JumpKhaunter67-1.0.0.81.zip",
+    "DownloadLinkUpdate": "https://raw.githubusercontent.com/kpaget312/Khaunter/main/releases/JumpKhaunter67-1.0.0.81.zip"
   }
 ]
